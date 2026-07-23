@@ -663,3 +663,22 @@ func isSorted(s []string) bool {
 	}
 	return true
 }
+
+func TestViewAgentList_ShowsSuccessBannerAfterSave(t *testing.T) {
+	cfg := fixtureConfig(t)
+	grouped := sampleGrouped()
+	m := NewModel(cfg, grouped, 5)
+	m.saveSuccess = true
+	out := viewAgentList(m)
+	assert.Contains(t, out, "Saved", "should show 'Saved' in banner")
+	assert.True(t, containsAny(out, "✓", "✔"), "should have a checkmark")
+}
+
+func TestViewAgentList_NoSuccessBannerWhenNotSaved(t *testing.T) {
+	cfg := fixtureConfig(t)
+	grouped := sampleGrouped()
+	m := NewModel(cfg, grouped, 5)
+	m.saveSuccess = false
+	out := viewAgentList(m)
+	assert.NotContains(t, out, "Saved successfully", "should not show banner when not saved")
+}

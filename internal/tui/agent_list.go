@@ -14,14 +14,23 @@
 //	  model: <value or (none)>
 //
 //	── Primary Agents ──
-//	  [cursor] agent-name  [DISABLED]
-//	    model: <value or (none)>
+//	  ▶ agent-name  [DISABLED]
+//	    model:       <value or (none)>
+//	    temperature: <value or (none)>
+//	    top_p:       <value or (none)>
+//	    color:       <value or (none)>
+//	    steps:       <value or (none)>
+//	    disable:     <value or (none)>
 //
 //	── Subagents ──
-//	  [cursor] agent-name  [H]
-//	    model: <value or (none)>
+//	  ▶ agent-name  [H]
+//	    ...same six fields...
 //
 //	[ <Agents> · 11 agents · ● unsaved ]                  ? for help
+//
+// All six configurable fields (model, temperature, top_p, color, steps,
+// disable) are shown per agent so users can audit their full config without
+// drilling into each agent. (REQ-TUI-002)
 //
 // Spec coverage:
 //   - REQ-TUI-002: Agent list rendering (sections, model display, indicators)
@@ -29,6 +38,7 @@
 package tui
 
 import (
+	"fmt"
 	"sort"
 	"strings"
 
@@ -90,12 +100,17 @@ func selectableItems(m Model) []string {
 //	  model: <value or (none)>
 //
 //	── Primary Agents ──
-//	  [cursor] agent-name  [DISABLED]
-//	    model: <value or (none)>
+//	  ▶ agent-name  [DISABLED]
+//	    model:       <value or (none)>
+//	    temperature: <value or (none)>
+//	    top_p:       <value or (none)>
+//	    color:       <value or (none)>
+//	    steps:       <value or (none)>
+//	    disable:     <value or (none)>
 //
 //	── Subagents ──
-//	  [cursor] agent-name  [H]
-//	    model: <value or (none)>
+//	  ▶ agent-name  [H]
+//	    ...same six fields...
 //
 //	[ <Agents> · 11 agents · ● unsaved ]                  ? for help
 //
@@ -103,6 +118,9 @@ func selectableItems(m Model) []string {
 // Hidden agents appear with [H] and ARE selectable.
 // System agents are already filtered out by GetAgents (never in primaryAgents
 // or subagents).
+//
+// All six fields per agent are shown so users can verify their full config
+// from the list without drilling into each agent. (REQ-TUI-002)
 //
 // Spec: REQ-TUI-002.
 func viewAgentList(m Model) string {
@@ -114,7 +132,15 @@ func viewAgentList(m Model) string {
 
 	// --- Header banner ---
 	b.WriteString(renderHeader(m, "Agents"))
-	b.WriteString("\n\n")
+
+	// --- Success banner (if just saved) ---
+	if m.saveSuccess {
+		b.WriteString("\n")
+		b.WriteString(SuccessStyle.Render("✓ Saved successfully!"))
+		b.WriteString("\n")
+	}
+
+	b.WriteString("\n")
 
 	// Build a disabled set for O(1) lookups during rendering.
 	disabled := make(map[string]bool, len(m.disabledAgents))
@@ -207,34 +233,80 @@ func renderGlobalRow(modelVal string, isSelected bool) string {
 	return AgentNormal.Render(content)
 }
 
-// renderAgentRow renders a single agent row (name + model value). The style
-// depends on whether the agent is disabled, hidden, or currently selected.
+// agentListFields is the ordered set of fields every agent row exposes in the
+// agent list view. Order is fixed: model first (most important), then
+// tuning knobs, then visual (color), behavior (steps), and the disable flag.
+var agentListFields = []string{
+	"model",
+	"temperature",
+	"top_p",
+	"color",
+	"steps",
+	"disable",
+}
+
+// compactFieldValue resolves a single field for an agent and renders it as a
+// short string for the agent list. Returns "(none)" if the field is missing
+// or its value is nil. Empty strings also render as "" (caller decides) —
+// for the agent list, we never want empty strings to look like a real value,
+// so we collapse them to "(none)" too.
+func compactFieldValue(m Model, name, field string) string {
+	val, ok := m.config.GetAgentField(name, field)
+	if !ok || val == nil {
+		return "(none)"
+	}
+	s := fmt.Sprintf("%v", val)
+	if s == "" {
+		return "(none)"
+	}
+	return s
+}
+
+// renderAgentRow renders a single agent row — the agent name plus all six
+// configurable fields (model, temperature, top_p, color, steps, disable) —
+// one per line, aligned for readability. The style depends on whether the
+// agent is disabled, hidden, or currently selected.
+//
+// Layout:
+//
+//	  [cursor] name  [H] | [DISABLED]
+//	    model:       <value or (none)>
+//	    temperature: <value or (none)>
+//	    top_p:       <value or (none)>
+//	    color:       <value or (none)>
+//	    steps:       <value or (none)>
+//	    disable:     <value or (none)>
+//
+// Spec: REQ-TUI-002 — agent list rendering shows full per-agent config.
 func renderAgentRow(m Model, name string, isDisabled, isSelected bool) string {
 	prefix := "  "
 	if isSelected {
 		prefix = SelectedPrefix.Render("▶ ") + " "
 	}
 
-	modelVal := "(none)"
-	if val, ok := m.config.GetAgentField(name, "model"); ok {
-		if s, ok := val.(string); ok && s != "" {
-			modelVal = s
-		}
-	}
-
-	content := prefix + name
+	nameLine := prefix + name
 
 	// Append indicator for hidden agents.
 	if m.config.IsAgentHidden(name) {
-		content += " " + HelpStyle.Render("[H]")
+		nameLine += " " + HelpStyle.Render("[H]")
 	}
 	// Append indicator for disabled agents.
 	if isDisabled {
-		content += " " + ErrorStyle.Render("[DISABLED]")
+		nameLine += " " + ErrorStyle.Render("[DISABLED]")
 	}
 
-	content += "\n    model: " + FieldValue.Render(modelVal)
+	var b strings.Builder
+	b.WriteString(nameLine)
+	b.WriteByte('\n')
 
+	// Render all six fields, label-padded for visual alignment. Field labels
+	// are plain; only the value is themed with FieldValue.
+	for _, field := range agentListFields {
+		val := compactFieldValue(m, name, field)
+		fmt.Fprintf(&b, "    %-13s %s\n", field+":", FieldValue.Render(val))
+	}
+
+	content := b.String()
 	switch {
 	case isDisabled:
 		return AgentDisabled.Render(content)

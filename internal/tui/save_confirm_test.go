@@ -321,3 +321,168 @@ func TestView_DispatchesToSaveConfirm(t *testing.T) {
 	assert.Contains(t, out, "Save",
 		"global View() MUST dispatch ScreenSaveConfirm to viewSaveConfirm")
 }
+
+// ---------------------------------------------------------------------------
+// Diff preview (REQ-TUI-007 — show pending changes before save)
+// ---------------------------------------------------------------------------
+
+func TestViewSaveConfirm_ShowsChanges(t *testing.T) {
+	m := newSaveConfirmModel(t, true)
+	m.changes = []Change{
+		{Target: "code-reviewer", Field: "model", OldVal: "anthropic/claude-sonnet-4-20250514", NewVal: "opencode-go/glm-5.2"},
+		{Target: "plan", Field: "temperature", OldVal: 0.4, NewVal: 0.7},
+	}
+	out := viewSaveConfirm(m)
+	assert.Contains(t, out, "code-reviewer.model",
+		"each change MUST render as Target.Field")
+	assert.Contains(t, out, "plan.temperature",
+		"each change MUST render as Target.Field")
+	assert.Contains(t, out, "2 changes",
+		"the header MUST show the total change count")
+	assert.Contains(t, out, "opencode-go/glm-5.2",
+		"the new value MUST appear in the diff line")
+	assert.Contains(t, out, "anthropic/claude-sonnet-4-20250514",
+		"the old value MUST appear in the diff line")
+}
+
+func TestViewSaveConfirm_NoChanges_OmitsDiff(t *testing.T) {
+	m := newSaveConfirmModel(t, true)
+	m.changes = nil
+	out := viewSaveConfirm(m)
+	assert.NotContains(t, out, "Saving",
+		"diff section MUST be omitted when there are no pending changes")
+}
+
+func TestSelectModelAtCursor_RecordsChange(t *testing.T) {
+	m := newModelSelectModel(t, "global", "")
+	m.cursor = 0
+
+	before, _ := m.config.GetGlobalModel()
+	newM := selectModelAtCursor(m)
+
+	require.Len(t, newM.changes, 1,
+		"selecting a model MUST record exactly one change")
+	assert.Equal(t, "global", newM.changes[0].Target,
+		"the change target MUST be 'global' for global edits")
+	assert.Equal(t, "model", newM.changes[0].Field,
+		"the change field MUST be 'model'")
+	assert.Equal(t, before, newM.changes[0].OldVal,
+		"the change MUST capture the previous global model as OldVal")
+	assert.NotEqual(t, before, newM.changes[0].NewVal,
+		"the change MUST capture the newly-selected model as NewVal")
+	assert.True(t, newM.dirty,
+		"the model MUST be dirty after a mutation")
+}
+
+func TestSelectModelAtCursor_PerAgent_RecordsChange(t *testing.T) {
+	m := newModelSelectModel(t, "model", "code-reviewer")
+	m.cursor = 0
+
+	before, _ := m.config.GetAgentField("code-reviewer", "model")
+	newM := selectModelAtCursor(m)
+
+	require.Len(t, newM.changes, 1)
+	assert.Equal(t, "code-reviewer", newM.changes[0].Target,
+		"the change target MUST be the agent name for per-agent edits")
+	assert.Equal(t, "model", newM.changes[0].Field)
+	assert.Equal(t, before, newM.changes[0].OldVal)
+}
+
+func TestRecordChange_SetsDirty(t *testing.T) {
+	m := NewModel(fixtureConfig(t), sampleGrouped(), 5)
+	require.False(t, m.dirty, "precondition: a fresh model is not dirty")
+
+	m.RecordChange("plan", "temperature", 0.4, 0.7)
+
+	assert.True(t, m.dirty,
+		"RecordChange MUST mark the model dirty")
+	require.Len(t, m.changes, 1)
+	assert.Equal(t, "plan", m.changes[0].Target)
+	assert.Equal(t, "temperature", m.changes[0].Field)
+	assert.Equal(t, 0.4, m.changes[0].OldVal)
+	assert.Equal(t, 0.7, m.changes[0].NewVal)
+}
+
+func TestPerformSave_ClearsChanges(t *testing.T) {
+	m := writableSaveConfirmModel(t, 5)
+	m.changes = []Change{
+		{Target: "code-reviewer", Field: "temperature", OldVal: nil, NewVal: 0.7},
+	}
+	require.NotEmpty(t, m.changes, "precondition: model has pending changes")
+
+	newM, _ := updateSaveConfirm(m, tea.KeyMsg{Type: tea.KeyEnter})
+
+	assert.False(t, newM.dirty, "dirty MUST be false after a successful save")
+	assert.Empty(t, newM.changes,
+		"changes MUST be cleared after a successful save so a re-entry to the screen starts fresh")
+}
+
+func TestCommitFieldInput_RecordsChange(t *testing.T) {
+	m := NewModel(fixtureConfig(t), sampleGrouped(), 5)
+	m.state = ScreenFieldInput
+	m.previousState = ScreenAgentDetail
+	m.selectedAgent = "code-reviewer"
+	m.fieldEditing = "temperature"
+	m.fieldInput.SetValue("0.5")
+
+	before, _ := m.config.GetAgentField("code-reviewer", "temperature")
+	newM := commitFieldInput(m)
+
+	require.Len(t, newM.changes, 1,
+		"committing a field value MUST record a change")
+	assert.Equal(t, "code-reviewer", newM.changes[0].Target)
+	assert.Equal(t, "temperature", newM.changes[0].Field)
+	assert.Equal(t, before, newM.changes[0].OldVal,
+		"OldVal MUST reflect the previous field value")
+	assert.Equal(t, 0.5, newM.changes[0].NewVal,
+		"NewVal MUST be the parsed value, not the raw input string")
+}
+
+func TestToggleDisable_RecordsChange(t *testing.T) {
+	m := NewModel(fixtureConfig(t), sampleGrouped(), 5)
+	m.state = ScreenAgentDetail
+	m.selectedAgent = "plan"
+	require.False(t, m.config.IsAgentDisabled("plan"),
+		"precondition: 'plan' is enabled in the fixture")
+
+	toggleDisable(&m)
+
+	require.Len(t, m.changes, 1,
+		"toggling disable MUST record a change")
+	assert.Equal(t, "plan", m.changes[0].Target)
+	assert.Equal(t, "disable", m.changes[0].Field)
+	assert.Equal(t, false, m.changes[0].OldVal)
+	assert.Equal(t, true, m.changes[0].NewVal)
+}
+
+// ---------------------------------------------------------------------------
+// formatValue helper
+// ---------------------------------------------------------------------------
+
+func TestFormatValue(t *testing.T) {
+	cases := []struct {
+		name string
+		in   interface{}
+		want string
+	}{
+		{"nil", nil, "(none)"},
+		{"empty string", "", "(empty)"},
+		{"non-empty string", "openai/gpt-5", "openai/gpt-5"},
+		{"float64 whole", 1.0, "1"},
+		{"float64 fractional", 0.7, "0.7"},
+		{"bool true", true, "true"},
+		{"bool false", false, "false"},
+		{"int", 42, "42"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, formatValue(tc.in))
+		})
+	}
+}
+
+func TestPlural(t *testing.T) {
+	assert.Equal(t, "", plural(1))
+	assert.Equal(t, "s", plural(0))
+	assert.Equal(t, "s", plural(2))
+}

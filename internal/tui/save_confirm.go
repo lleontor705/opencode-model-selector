@@ -20,6 +20,7 @@
 package tui
 
 import (
+	"fmt"
 	"strconv"
 	"strings"
 
@@ -36,6 +37,10 @@ import (
 //
 //	Config: <path>
 //	Backups: <count> (retention)
+//
+//	Saving N change(s):
+//	  <target>.<field>: <old> -> <new>
+//	  ...
 //
 //	<error message if any>
 //
@@ -68,10 +73,45 @@ func viewSaveConfirm(m Model) string {
 	b.WriteString("Backups: " + strconv.Itoa(m.backupCount) + " (retention)")
 	b.WriteString("\n\n")
 
+	// --- Diff preview ---
+	if len(m.changes) > 0 {
+		b.WriteString(DiffSummary.Render(fmt.Sprintf("Saving %d change%s:", len(m.changes), plural(len(m.changes)))))
+		b.WriteString("\n")
+		for _, ch := range m.changes {
+			fmt.Fprintf(&b, "  %s.%s: %s -> %s\n",
+				ch.Target, ch.Field,
+				formatValue(ch.OldVal),
+				formatValue(ch.NewVal))
+		}
+		b.WriteString("\n")
+	}
+
 	// --- Help footer ---
 	b.WriteString(HelpStyle.Render("ENTER: save  ESC: cancel"))
 
 	return b.String()
+}
+
+// formatValue renders a config value (interface{}) as a human-readable string
+// for the save-confirm diff preview. Nil and empty values get explicit
+// placeholders so the user can distinguish "no change yet" from "cleared".
+func formatValue(v interface{}) string {
+	if v == nil {
+		return "(none)"
+	}
+	switch val := v.(type) {
+	case string:
+		if val == "" {
+			return "(empty)"
+		}
+		return val
+	case float64:
+		return strconv.FormatFloat(val, 'g', -1, 64)
+	case bool:
+		return strconv.FormatBool(val)
+	default:
+		return fmt.Sprintf("%v", val)
+	}
 }
 
 // updateSaveConfirm handles key presses on the Save Confirm screen.
@@ -147,6 +187,7 @@ func performSave(m Model) (Model, tea.Cmd) {
 
 	// --- Success ---
 	m.dirty = false
+	m.changes = nil
 	m.saveError = ""
 	m.saveSuccess = true
 	m.state = ScreenAgentList

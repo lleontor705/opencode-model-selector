@@ -273,7 +273,7 @@ func currentField(m Model) string {
 	return m.editableFields[m.selectedField]
 }
 
-// toggleDisable flips the agent's disable flag and marks the model dirty. If the
+// toggleDisable flips the agent's disable flag and records the change. If the
 // agent is currently disabled, the config layer rejects the mutation (disabled
 // agents are immutable per REQ-CFG-005); in that case the toggle is a no-op
 // because the agent should not have been navigable in the first place.
@@ -285,5 +285,5 @@ func toggleDisable(m *Model) {
 		// agents are not navigable from the list, this path is defensive only.
 		return
 	}
-	m.dirty = true
+	m.RecordChange(agent, "disable", current, !current)
 }

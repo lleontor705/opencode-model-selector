@@ -50,6 +50,18 @@ var editableFieldSchema = []string{
 	"model", "temperature", "top_p", "color", "steps", "disable",
 }
 
+// Change records a single in-memory mutation that will be persisted on save.
+// Target is "global" for the global default model or the agent name for
+// per-agent edits; Field is the config key (model, temperature, ...). OldVal
+// and NewVal carry the raw interface{} values from the config layer so the
+// save-confirm screen can render a human-readable diff.
+type Change struct {
+	Target string
+	Field  string
+	OldVal interface{}
+	NewVal interface{}
+}
+
 // Model is the root Bubbletea model. It carries ALL TUI state in a single
 // value; screen handlers (added in later tasks) read and write these fields
 // via pointer receivers on helper methods, while Update/View use value
@@ -102,6 +114,10 @@ type Model struct {
 
 	// dirty is true when any in-memory edit has not yet been persisted.
 	dirty bool
+	// changes records every in-memory mutation since the last successful
+	// save. The save-confirm screen renders this slice as a diff so the
+	// user can verify what will be written to disk.
+	changes []Change
 	// quitConfirm is true when the "quit anyway?" confirmation overlay is
 	// active on the Agent List screen. It is a sub-state of ScreenAgentList,
 	// not a full screen. When true, only y/Y/ENTER (confirm) and n/N/ESC
@@ -177,6 +193,14 @@ func (m Model) Init() tea.Cmd {
 	return nil
 }
 
+// RecordChange appends a Change entry to the model and marks it dirty. Call
+// this from every mutation site AFTER the config has been updated so OldVal
+// reflects the previous value and NewVal reflects the new one.
+func (m *Model) RecordChange(target, field string, oldVal, newVal interface{}) {
+	m.changes = append(m.changes, Change{Target: target, Field: field, OldVal: oldVal, NewVal: newVal})
+	m.dirty = true
+}
+
 // Update is the global key/message dispatcher. It handles only the keys that
 // apply on EVERY screen (q, Ctrl+C, ESC, 's'); screen-specific keys are
 // routed to per-screen handlers added in subsequent tasks.
@@ -192,22 +216,50 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.KeyMsg:
-		// Ctrl+C quits immediately on most screens. On the Agent List screen,
-		// when there are unsaved changes, Ctrl+C is routed to the screen
-		// handler so it can show the quit-confirmation overlay (REQ-TUI-003).
-		// This also catches the case where quitConfirm is already active so
-		// the confirmation flow can process Ctrl+C as an ignored key.
+		// === GLOBAL KEYS (work on every screen) ===
+
+		// If quit confirmation is active, intercept all keys
+		if m.quitConfirm {
+			switch msg.String() {
+			case "y", "Y", "enter":
+				return m, tea.Quit
+			case "n", "N", "esc":
+				m.quitConfirm = false
+				return m, nil
+			}
+			return m, nil
+		}
+
+		// Ctrl+C: show quit confirmation if dirty, else quit
 		if msg.Type == tea.KeyCtrlC {
-			if m.state == ScreenAgentList && (m.dirty || m.quitConfirm) {
-				return updateAgentList(m, msg)
+			if m.dirty {
+				m.quitConfirm = true
+				return m, nil
 			}
 			return m, tea.Quit
 		}
 
-		// Screen-specific key dispatch. Each screen that has a dedicated
-		// handler takes over ALL non-Ctrl+C keys for that screen. Screens
-		// without handlers (implemented in later tasks) fall through to the
-		// global key handling below.
+		// 'q': show quit confirmation if dirty, else quit
+		if msg.Type == tea.KeyRunes && len(msg.Runes) == 1 && msg.Runes[0] == 'q' {
+			if m.dirty {
+				m.quitConfirm = true
+				return m, nil
+			}
+			return m, tea.Quit
+		}
+
+		// 's': transition to save-confirm if dirty
+		if msg.Type == tea.KeyRunes && len(msg.Runes) == 1 && msg.Runes[0] == 's' {
+			if m.dirty {
+				m.previousState = m.state
+				m.state = ScreenSaveConfirm
+			}
+			return m, nil
+		}
+
+		// === PER-SCREEN KEYS ===
+
+		// Screen-specific key dispatch
 		switch m.state {
 		case ScreenAgentList:
 			return updateAgentList(m, msg)
@@ -221,32 +273,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return updateSaveConfirm(m, msg)
 		}
 
-		// 'q' quits. The dirty-check confirmation flow is deferred to G2-T5;
-		// for the core dispatcher 'q' simply quits.
-		if msg.Type == tea.KeyRunes && len(msg.Runes) == 1 && msg.Runes[0] == 'q' {
-			return m, tea.Quit
-		}
-
-		// ESC pops the navigation stack: state becomes previousState. On the
-		// root screen, previousState is also ScreenAgentList (default), so ESC
-		// is a no-op there.
+		// ESC pops the navigation stack (no-op on root)
 		if msg.Type == tea.KeyEsc || msg.Type == tea.KeyEscape {
+			if m.state == m.previousState {
+				return m, nil
+			}
 			m.state = m.previousState
 			return m, nil
 		}
 
-		// 's' transitions to the save-confirm screen only when there are
-		// unsaved changes. With dirty=false we stay put (nothing to save).
-		if msg.Type == tea.KeyRunes && len(msg.Runes) == 1 && msg.Runes[0] == 's' {
-			if m.dirty {
-				m.previousState = m.state
-				m.state = ScreenSaveConfirm
-			}
-			return m, nil
-		}
-
-		// Unmapped key: future per-screen handlers (j/k/enter/etc.) will be
-		// invoked here once implemented. For now, no-op.
 		return m, nil
 	}
 
