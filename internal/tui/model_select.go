@@ -56,8 +56,8 @@ func matchesFilter(model opencode.Model, filter string) bool {
 }
 
 // applyFilter rebuilds filteredModels from flatModels using the current
-// filterInput value, sorts the result by FullName for deterministic display,
-// and clamps the cursor to a valid index.
+// filterInput value, sorts the selectable rows in display order, and clamps
+// the cursor to a valid index.
 //
 // Spec: REQ-TUI-005 — filter rebuild on text change.
 func applyFilter(m Model) Model {
@@ -69,11 +69,7 @@ func applyFilter(m Model) Model {
 		}
 	}
 
-	// Sort by FullName for deterministic ordering in both rendering and
-	// cursor navigation.
-	sort.Slice(m.filteredModels, func(i, j int) bool {
-		return m.filteredModels[i].FullName < m.filteredModels[j].FullName
-	})
+	sortSelectableModels(m.filteredModels)
 
 	// Clamp cursor to valid range.
 	if m.modelCursor >= len(m.filteredModels) {
@@ -84,6 +80,18 @@ func applyFilter(m Model) Model {
 	}
 
 	return m
+}
+
+func sortSelectableModels(models []opencode.Model) {
+	sort.Slice(models, func(i, j int) bool {
+		if models[i].Provider != models[j].Provider {
+			return models[i].Provider < models[j].Provider
+		}
+		if models[i].ID != models[j].ID {
+			return models[i].ID < models[j].ID
+		}
+		return models[i].FullName < models[j].FullName
+	})
 }
 
 // viewModelSelection renders the model selection screen.
@@ -139,19 +147,8 @@ func renderModelSelectionContent(m Model) (string, int, int) {
 	}
 
 	currentModel := currentModelFullName(m)
-	filteredSet := make(map[string]bool, len(m.filteredModels))
-	for _, model := range m.filteredModels {
-		filteredSet[model.FullName] = true
-	}
-
-	providers := make([]string, 0, len(m.groupedModels))
-	for p := range m.groupedModels {
-		providers = append(providers, p)
-	}
-	sort.Strings(providers)
-
 	var blocks []string
-	flatIdx, line := 0, 0
+	line := 0
 	selectedStart, selectedEnd := 0, 0
 	appendBlock := func(block string, selected bool) {
 		block = clipLines(block, m.width)
@@ -163,36 +160,16 @@ func renderModelSelectionContent(m Model) (string, int, int) {
 		blocks = append(blocks, block)
 		line += height
 	}
-	for _, provider := range providers {
-		models := append([]opencode.Model(nil), m.groupedModels[provider]...)
-		sort.Slice(models, func(i, j int) bool {
-			return models[i].FullName < models[j].FullName
-		})
-
-		hasFiltered := false
-		for _, model := range models {
-			if filteredSet[model.FullName] {
-				hasFiltered = true
-				break
-			}
-		}
-		if !hasFiltered {
-			continue
+	previousProvider := ""
+	for index, model := range m.filteredModels {
+		if model.Provider != previousProvider {
+			appendBlock(renderProviderBadge(model.Provider), false)
+			previousProvider = model.Provider
 		}
 
-		appendBlock(renderProviderBadge(provider), false)
-
-		for _, model := range models {
-			if !filteredSet[model.FullName] {
-				continue
-			}
-
-			isSelected := flatIdx == m.modelCursor
-			isCurrent := model.FullName == currentModel
-
-			appendBlock(renderModelRow(model, isSelected, isCurrent, m.width), isSelected)
-			flatIdx++
-		}
+		isSelected := index == m.modelCursor
+		isCurrent := model.FullName == currentModel
+		appendBlock(renderModelRow(model, isSelected, isCurrent, m.width), isSelected)
 	}
 	return strings.Join(blocks, "\n"), selectedStart, selectedEnd
 }
@@ -355,9 +332,6 @@ func initModelSelectionScreen(m *Model) {
 	m.filterInput.Focus()
 	m.modelCursor = 0
 	m.filteredModels = append([]opencode.Model(nil), m.flatModels...)
-	// Sort for deterministic initial display.
-	sort.Slice(m.filteredModels, func(i, j int) bool {
-		return m.filteredModels[i].FullName < m.filteredModels[j].FullName
-	})
+	sortSelectableModels(m.filteredModels)
 	syncModelViewport(m)
 }
