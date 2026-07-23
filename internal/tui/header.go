@@ -39,7 +39,17 @@ const (
 	// conservatively so the banner looks balanced in typical 80-120 column
 	// terminals; on wider terminals the right padding absorbs the slack.
 	headerBoxWidth = 60
+	// fullHelpMinWidth is the first terminal width that renders the verbose
+	// screen help. Narrower supported terminals use complete compact wording.
+	fullHelpMinWidth = 70
 )
+
+func renderResponsiveHelp(width int, full, compact string) string {
+	if width > 0 && width < fullHelpMinWidth {
+		return HelpStyle.Render(compact)
+	}
+	return HelpStyle.Render(full)
+}
 
 // renderHeader renders the stylized top-of-screen banner. The banner is a
 // rounded box with the app name as a chip-style title and the tagline below.

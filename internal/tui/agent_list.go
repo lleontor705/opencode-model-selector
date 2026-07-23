@@ -127,7 +127,7 @@ func viewAgentList(m Model) string {
 		if m.quitConfirm {
 			parts = append(parts, ErrorStyle.Render("⚠ You have unsaved changes. Quit anyway? (y/n)"))
 		}
-		return strings.Join(append(parts, agentListHelp(), renderStatusBar(m, agentListScreenLabel, len(m.primaryAgents)+len(m.subagents))), "\n")
+		return strings.Join(append(parts, agentListHelp(m.width), renderStatusBar(m, agentListScreenLabel, len(m.primaryAgents)+len(m.subagents))), "\n")
 	}
 
 	syncAgentViewport(&m)
@@ -139,20 +139,23 @@ func viewAgentList(m Model) string {
 	if m.quitConfirm {
 		parts = append(parts, clipLines(ErrorStyle.Render("⚠ You have unsaved changes. Quit anyway? (y/n)"), m.width))
 	}
-	parts = append(parts, clipLines(agentListHelp(), m.width))
+	parts = append(parts, agentListHelp(m.width))
 	parts = append(parts, renderStatusBar(m, agentListScreenLabel, len(m.primaryAgents)+len(m.subagents)))
 	return strings.Join(parts, "\n")
 }
 
-func agentListHelp() string {
-	return HelpStyle.Render("S Review & Save · Q Quit · Esc Quit/confirm")
+func agentListHelp(width int) string {
+	return renderResponsiveHelp(width,
+		"S Review & Save · Q Quit · Esc Quit/confirm",
+		"S Save · Q Quit · Esc Exit",
+	)
 }
 
 func agentListViewportHeight(m Model) int {
 	if m.height <= 0 {
 		return 0
 	}
-	fixed := lipgloss.Height(renderHeader(m, "Agents")) + lipgloss.Height(agentListHelp()) +
+	fixed := lipgloss.Height(renderHeader(m, "Agents")) + lipgloss.Height(agentListHelp(m.width)) +
 		lipgloss.Height(renderStatusBar(m, agentListScreenLabel, len(m.primaryAgents)+len(m.subagents)))
 	components := 4 // header, viewport, help, status
 	if m.saveSuccess {

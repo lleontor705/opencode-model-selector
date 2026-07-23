@@ -113,13 +113,20 @@ func viewAgentDetail(m Model) string {
 
 	// --- Help footer ---
 	b.WriteString("\n")
-	b.WriteString(HelpStyle.Render("Enter Edit · Space Toggle disable · S Review & Save · Esc Back"))
+	b.WriteString(agentDetailHelp(m.width))
 
 	// --- Status bar ---
 	b.WriteString("\n")
 	b.WriteString(renderStatusBar(m, "Agent: "+agent, 0))
 
 	return b.String()
+}
+
+func agentDetailHelp(width int) string {
+	return renderResponsiveHelp(width,
+		"Enter Edit · Space Toggle disable · S Review & Save · Esc Back",
+		"Enter Edit · S Save · Esc Back",
+	)
 }
 
 // fieldContextHint returns a short parenthetical hint shown next to a field

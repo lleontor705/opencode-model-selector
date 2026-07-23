@@ -55,7 +55,7 @@ func viewSaveConfirm(m Model) string {
 	}
 
 	header := saveReviewHeader(m)
-	footer := HelpStyle.Render("Enter/Y Save to disk · Esc/N Back")
+	footer := saveReviewHelp(m.width)
 	if m.width <= 0 || m.height <= 0 {
 		content := saveReviewContent(m)
 		if content == "" {
@@ -68,8 +68,15 @@ func viewSaveConfirm(m Model) string {
 	return strings.Join([]string{
 		clipLines(header, m.width),
 		m.saveViewport.View(),
-		clipLines(footer, m.width),
+		footer,
 	}, "\n")
+}
+
+func saveReviewHelp(width int) string {
+	return renderResponsiveHelp(width,
+		"Enter/Y Save to disk · Esc/N Back",
+		"Y Save · N/Esc Back",
+	)
 }
 
 func saveReviewHeader(m Model) string {
@@ -111,7 +118,7 @@ func saveReviewViewportHeight(m Model) int {
 	if m.height <= 0 || m.config == nil {
 		return 0
 	}
-	fixed := lipgloss.Height(saveReviewHeader(m)) + lipgloss.Height(HelpStyle.Render("Enter/Y Save to disk · Esc/N Back"))
+	fixed := lipgloss.Height(saveReviewHeader(m)) + lipgloss.Height(saveReviewHelp(m.width))
 	return max(1, m.height-fixed-2)
 }
 

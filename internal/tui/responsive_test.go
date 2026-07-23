@@ -72,7 +72,7 @@ func TestView_FooterRemainsVisibleAtMinimumSupportedHeight(t *testing.T) {
 
 	out := m.View()
 	assert.LessOrEqual(t, renderedLineCount(out), minTerminalHeight)
-	assert.Contains(t, out, "Review & Save")
+	assert.Contains(t, out, "S Save · Q Quit · Esc Exit")
 	assert.Contains(t, out, agentListScreenLabel)
 }
 
@@ -109,6 +109,76 @@ func TestView_BelowMinimumTerminalSizeShowsCompactWarning(t *testing.T) {
 	assertRenderedWidthAtMost(t, out, minTerminalWidth-1)
 }
 
+func TestView_HelpFootersFitSupportedWidthsAndKeepCriticalActions(t *testing.T) {
+	tests := []struct {
+		name        string
+		model       func(t *testing.T) Model
+		compactHelp string
+		fullHelp    string
+	}{
+		{
+			name:        "agent list",
+			model:       func(t *testing.T) Model { return NewModel(fixtureConfig(t), sampleGrouped(), 5) },
+			compactHelp: "S Save · Q Quit · Esc Exit",
+			fullHelp:    "S Review & Save · Q Quit · Esc Quit/confirm",
+		},
+		{
+			name: "agent detail",
+			model: func(t *testing.T) Model {
+				return newDetailModel(t, "code-reviewer")
+			},
+			compactHelp: "Enter Edit · S Save · Esc Back",
+			fullHelp:    "Enter Edit · Space Toggle disable · S Review & Save · Esc Back",
+		},
+		{
+			name: "model picker",
+			model: func(t *testing.T) Model {
+				m := NewModel(fixtureConfig(t), sampleGrouped(), 5)
+				m.state = ScreenModelSelection
+				m.fieldEditing = "global"
+				initModelSelectionScreen(&m)
+				return m
+			},
+			compactHelp: "Enter Apply · Esc Cancel",
+			fullHelp:    "Enter Apply model · Esc Cancel",
+		},
+		{
+			name: "field input",
+			model: func(t *testing.T) Model {
+				m := newFieldInputModel(t, "code-reviewer", "temperature")
+				return m
+			},
+			compactHelp: "Enter Apply · Esc Discard",
+			fullHelp:    "Enter Apply · Esc Discard",
+		},
+		{
+			name: "save review",
+			model: func(t *testing.T) Model {
+				return newSaveConfirmModel(t, true)
+			},
+			compactHelp: "Y Save · N/Esc Back",
+			fullHelp:    "Enter/Y Save to disk · Esc/N Back",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			for _, width := range []int{40, 60, 80} {
+				t.Run(fmt.Sprintf("width_%d", width), func(t *testing.T) {
+					m := resizeModel(t, tt.model(t), width, 30)
+					expected := tt.compactHelp
+					if width >= 70 {
+						expected = tt.fullHelp
+					}
+
+					footer := renderedLineContaining(t, m.View(), expected)
+					assert.LessOrEqual(t, lipgloss.Width(footer), m.width)
+				})
+			}
+		})
+	}
+}
+
 func resizeModel(t *testing.T, m Model, width, height int) Model {
 	t.Helper()
 	updated, _ := m.Update(tea.WindowSizeMsg{Width: width, Height: height})
@@ -140,4 +210,15 @@ func assertRenderedWidthAtMost(t *testing.T, output string, width int) {
 	for i, line := range strings.Split(output, "\n") {
 		assert.LessOrEqualf(t, lipgloss.Width(line), width, "rendered line %d exceeds terminal width", i+1)
 	}
+}
+
+func renderedLineContaining(t *testing.T, output, expected string) string {
+	t.Helper()
+	for _, line := range strings.Split(output, "\n") {
+		if strings.Contains(line, expected) {
+			return line
+		}
+	}
+	require.FailNowf(t, "footer not found", "expected rendered footer containing %q", expected)
+	return ""
 }

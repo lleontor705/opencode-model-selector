@@ -92,18 +92,21 @@ func viewModelSelection(m Model) string {
 		return ErrorStyle.Render("no config loaded")
 	}
 	search := clipLines(SearchLabel.Render("🔍 Search: ")+m.filterInput.View(), m.width)
-	help := modelSelectionHelp()
+	help := modelSelectionHelp(m.width)
 	status := renderStatusBar(m, "Select Model", len(m.filteredModels))
 	if m.width <= 0 || m.height <= 0 {
 		content, _, _ := renderModelSelectionContent(m)
 		return strings.Join([]string{renderHeader(m, "Select Model"), search, content, help, status}, "\n")
 	}
 	syncModelViewport(&m)
-	return strings.Join([]string{renderHeader(m, "Select Model"), search, m.modelViewport.View(), clipLines(help, m.width), status}, "\n")
+	return strings.Join([]string{renderHeader(m, "Select Model"), search, m.modelViewport.View(), help, status}, "\n")
 }
 
-func modelSelectionHelp() string {
-	return HelpStyle.Render("Enter Apply model · Esc Cancel")
+func modelSelectionHelp(width int) string {
+	return renderResponsiveHelp(width,
+		"Enter Apply model · Esc Cancel",
+		"Enter Apply · Esc Cancel",
+	)
 }
 
 func modelSelectionViewportHeight(m Model) int {
@@ -112,7 +115,7 @@ func modelSelectionViewportHeight(m Model) int {
 	}
 	search := SearchLabel.Render("🔍 Search: ") + m.filterInput.View()
 	fixed := lipgloss.Height(renderHeader(m, "Select Model")) + lipgloss.Height(search) +
-		lipgloss.Height(modelSelectionHelp()) + lipgloss.Height(renderStatusBar(m, "Select Model", len(m.filteredModels)))
+		lipgloss.Height(modelSelectionHelp(m.width)) + lipgloss.Height(renderStatusBar(m, "Select Model", len(m.filteredModels)))
 	return max(1, m.height-fixed-4) // five vertical components have four separators
 }
 

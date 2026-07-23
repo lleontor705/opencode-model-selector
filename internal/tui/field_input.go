@@ -169,9 +169,16 @@ func viewFieldInput(m Model) string {
 
 	// --- Help footer ---
 	b.WriteByte('\n')
-	b.WriteString(HelpStyle.Render("Enter Apply · Esc Discard"))
+	b.WriteString(fieldInputHelp(m.width))
 
 	return b.String()
+}
+
+func fieldInputHelp(width int) string {
+	return renderResponsiveHelp(width,
+		"Enter Apply · Esc Discard",
+		"Enter Apply · Esc Discard",
+	)
 }
 
 // updateFieldInput handles key presses on the Field Input screen.
