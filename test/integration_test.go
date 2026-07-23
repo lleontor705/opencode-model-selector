@@ -182,14 +182,6 @@ func pressKey(m tea.Model, key tea.KeyMsg) tea.Model {
 	return updated
 }
 
-// pressKeys sends a sequence of KeyMsgs in order, returning the final model.
-func pressKeys(m tea.Model, keys ...tea.KeyMsg) tea.Model {
-	for _, k := range keys {
-		m = pressKey(m, k)
-	}
-	return m
-}
-
 // keyRune constructs a KeyMsg for a single rune (e.g. 'j', 'k', 's').
 func keyRune(r rune) tea.KeyMsg {
 	return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}}

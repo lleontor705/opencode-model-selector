@@ -231,7 +231,9 @@ func separatorLine(label string) string {
 //   - Empty input produces "No models available"
 func formatModels(w io.Writer, models []opencode.Model) error {
 	if len(models) == 0 {
-		fmt.Fprintln(w, "No models available")
+		if _, err := fmt.Fprintln(w, "No models available"); err != nil {
+			return err
+		}
 		return nil
 	}
 
@@ -245,20 +247,30 @@ func formatModels(w io.Writer, models []opencode.Model) error {
 	sort.Strings(providers)
 
 	// Header
-	fmt.Fprintf(w, "Available Models (%d total)\n\n", len(models))
+	if _, err := fmt.Fprintf(w, "Available Models (%d total)\n\n", len(models)); err != nil {
+		return err
+	}
 
 	// Provider sections
 	for _, p := range providers {
 		pModels := grouped[p]
-		fmt.Fprintln(w, separatorLine(fmt.Sprintf("%s/ (%d)", p, len(pModels))))
-		for _, m := range pModels {
-			fmt.Fprintf(w, "  %s\n", m.ID)
+		if _, err := fmt.Fprintln(w, separatorLine(fmt.Sprintf("%s/ (%d)", p, len(pModels)))); err != nil {
+			return err
 		}
-		fmt.Fprintln(w) // blank line between sections
+		for _, m := range pModels {
+			if _, err := fmt.Fprintf(w, "  %s\n", m.ID); err != nil {
+				return err
+			}
+		}
+		if _, err := fmt.Fprintln(w); err != nil { // blank line between sections
+			return err
+		}
 	}
 
 	// Footer
-	fmt.Fprintf(w, "Total: %d models across %d providers\n", len(models), len(providers))
+	if _, err := fmt.Fprintf(w, "Total: %d models across %d providers\n", len(models), len(providers)); err != nil {
+		return err
+	}
 
 	return nil
 }
@@ -333,12 +345,16 @@ func formatFieldValue(cfg *config.Config, agentName, fieldName string, kind fiel
 }
 
 // writeAgentBlock writes one agent's name and 6 fields to w.
-func writeAgentBlock(w io.Writer, cfg *config.Config, name string) {
+func writeAgentBlock(w io.Writer, cfg *config.Config, name string) error {
 	// Agent name with optional [H] marker for hidden agents.
 	if cfg.IsAgentHidden(name) {
-		fmt.Fprintf(w, "  %s [H]\n", name)
+		if _, err := fmt.Fprintf(w, "  %s [H]\n", name); err != nil {
+			return err
+		}
 	} else {
-		fmt.Fprintf(w, "  %s\n", name)
+		if _, err := fmt.Fprintf(w, "  %s\n", name); err != nil {
+			return err
+		}
 	}
 
 	// Six editable fields, label column padded to 12 runes + space.
@@ -348,9 +364,14 @@ func writeAgentBlock(w io.Writer, cfg *config.Config, name string) {
 		if f.name == "disable" && val == "true" {
 			marker = "                   [DISABLED]"
 		}
-		fmt.Fprintf(w, "    %-12s %s%s\n", f.name+":", val, marker)
+		if _, err := fmt.Fprintf(w, "    %-12s %s%s\n", f.name+":", val, marker); err != nil {
+			return err
+		}
 	}
-	fmt.Fprintln(w) // blank line between agents
+	if _, err := fmt.Fprintln(w); err != nil { // blank line between agents
+		return err
+	}
+	return nil
 }
 
 // formatAgents writes the agent listing to w.
@@ -365,17 +386,27 @@ func writeAgentBlock(w io.Writer, cfg *config.Config, name string) {
 //   - Hidden agents marked with [H]
 func formatAgents(w io.Writer, cfg *config.Config) error {
 	// Header
-	fmt.Fprintln(w, "OpenCode Agents")
-	fmt.Fprintln(w)
+	if _, err := fmt.Fprintln(w, "OpenCode Agents"); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintln(w); err != nil {
+		return err
+	}
 
 	// Global default model
 	globalModel, ok := cfg.GetGlobalModel()
 	if ok {
-		fmt.Fprintf(w, "Global Default Model: %s\n", globalModel)
+		if _, err := fmt.Fprintf(w, "Global Default Model: %s\n", globalModel); err != nil {
+			return err
+		}
 	} else {
-		fmt.Fprintln(w, "Global Default Model: (none)")
+		if _, err := fmt.Fprintln(w, "Global Default Model: (none)"); err != nil {
+			return err
+		}
 	}
-	fmt.Fprintln(w)
+	if _, err := fmt.Fprintln(w); err != nil {
+		return err
+	}
 
 	// Get agents grouped by mode
 	primary, subagents, _ := cfg.GetAgents()
@@ -385,15 +416,23 @@ func formatAgents(w io.Writer, cfg *config.Config) error {
 	sort.Strings(subagents)
 
 	// Primary agents section
-	fmt.Fprintln(w, separatorLine("Primary Agents"))
+	if _, err := fmt.Fprintln(w, separatorLine("Primary Agents")); err != nil {
+		return err
+	}
 	for _, name := range primary {
-		writeAgentBlock(w, cfg, name)
+		if err := writeAgentBlock(w, cfg, name); err != nil {
+			return err
+		}
 	}
 
 	// Subagents section
-	fmt.Fprintln(w, separatorLine("Subagents"))
+	if _, err := fmt.Fprintln(w, separatorLine("Subagents")); err != nil {
+		return err
+	}
 	for _, name := range subagents {
-		writeAgentBlock(w, cfg, name)
+		if err := writeAgentBlock(w, cfg, name); err != nil {
+			return err
+		}
 	}
 
 	return nil

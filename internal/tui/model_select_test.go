@@ -322,7 +322,7 @@ func TestViewModelSelection_CurrentModelMarkerForAgent(t *testing.T) {
 	// code-reviewer has model "anthropic/claude-sonnet-4-20250514" in the fixture,
 	// which is NOT in richGrouped — so no checkmark should appear for the fixture
 	// models. Instead, set it to a model that IS in richGrouped.
-	m.config.SetAgentField("code-reviewer", "model", "opencode-go/glm-5.2")
+	require.NoError(t, m.config.SetAgentField("code-reviewer", "model", "opencode-go/glm-5.2"))
 	out := viewModelSelection(m)
 	assert.True(t, containsAny(out, "\u2713", "current"),
 		"the current per-agent model MUST be marked with a checkmark or 'current' indicator")

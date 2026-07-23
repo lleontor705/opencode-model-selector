@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <a href="#quick-start">Installation</a> &bull;
+  <a href="docs/INSTALLATION.md">Installation</a> &bull;
   <a href="#features">Features</a> &bull;
   <a href="#architecture">Architecture</a> &bull;
   <a href="#contributing">Contributing</a>
@@ -49,22 +49,19 @@
 
 ## Quick Start
 
-### Install from source
-
 ```bash
-# Clone and build
-git clone https://github.com/lleontor705/opencode-model-selector.git
-cd opencode-model-selector
-make build
+# Install
+go install github.com/lleontor705/opencode-model-selector/cmd@latest  # all platforms
 
-# Or install directly to GOPATH/bin
-go install ./cmd
+# Run
+opencode-model-selector              # interactive TUI
+opencode-model-selector --list-models  # list available models
+opencode-model-selector --list-agents  # list agents and config
 ```
 
-### Prerequisites
+Prerequisites: [OpenCode CLI](https://opencode.ai) installed and on your `$PATH`.
 
-- [OpenCode CLI](https://opencode.ai) installed and on your `$PATH`
-- An `opencode.json` config file (default: `~/.config/opencode/opencode.json`)
+For Homebrew, pre-built binaries, and build-from-source instructions, see [Installation](docs/INSTALLATION.md).
 
 ## Features
 
