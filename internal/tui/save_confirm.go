@@ -5,7 +5,7 @@
 // triggers the atomic save flow (backup → write → cleanup) on confirmation.
 //
 // Save flow (REQ-TUI-007):
-//  1. dirty == false → "No changes to save", return to previousState
+//  1. dirty == false → "No changes to save", return to immutable origin
 //  2. dirty == true:
 //     a. backupCount > 0 → CreateBackup (on error: show error, stay)
 //     b. config.Save() (on error: show error, keep dirty, stay)
@@ -118,7 +118,7 @@ func formatValue(v interface{}) string {
 //
 // Keys:
 //   - ENTER / 'y': confirm save → performSave()
-//   - ESC / 'n':   cancel → return to previousState without saving
+//   - ESC / 'n':   cancel → return to immutable origin without saving
 //
 // Spec: REQ-TUI-007 — interaction.
 func updateSaveConfirm(m Model, msg tea.Msg) (Model, tea.Cmd) {
@@ -136,7 +136,7 @@ func updateSaveConfirm(m Model, msg tea.Msg) (Model, tea.Cmd) {
 	// --- ESC or 'n': cancel ---
 	case keyMsg.Type == tea.KeyEsc || keyMsg.Type == tea.KeyEscape ||
 		(keyMsg.Type == tea.KeyRunes && len(keyMsg.Runes) == 1 && keyMsg.Runes[0] == 'n'):
-		m.state = m.previousState
+		m.popScreen()
 		return m, nil
 
 	// --- Unmapped key: no-op ---
@@ -148,7 +148,7 @@ func updateSaveConfirm(m Model, msg tea.Msg) (Model, tea.Cmd) {
 // performSave executes the save operation: backup → write → cleanup.
 //
 // Flow:
-//  1. If not dirty: set informational message and return to previousState.
+//  1. If not dirty: set informational message and return to immutable origin.
 //  2. If backupCount > 0: create a timestamped backup. On failure, show error
 //     and stay on screen.
 //  3. Save config atomically. On failure, show error, keep dirty, stay.
@@ -160,7 +160,7 @@ func performSave(m Model) (Model, tea.Cmd) {
 	// --- No changes to save ---
 	if !m.dirty {
 		m.saveError = "No changes to save"
-		m.state = m.previousState
+		m.popScreen()
 		return m, nil
 	}
 
@@ -191,5 +191,6 @@ func performSave(m Model) (Model, tea.Cmd) {
 	m.saveError = ""
 	m.saveSuccess = true
 	m.state = ScreenAgentList
+	m.navigationStack = nil
 	return m, nil
 }

@@ -158,7 +158,7 @@ func TestNewModel_FlatModelsBuilt(t *testing.T) {
 // the agent list.
 func TestNewModel_DefaultCursorZero(t *testing.T) {
 	m := NewModel(fixtureConfig(t), sampleGrouped(), 5)
-	assert.Equal(t, 0, m.cursor)
+	assert.Equal(t, 0, m.agentCursor)
 	assert.False(t, m.dirty, "freshly constructed model must not be dirty")
 }
 
@@ -234,7 +234,7 @@ func TestUpdate_ESC_PopsToPreviousState(t *testing.T) {
 	m := NewModel(fixtureConfig(t), sampleGrouped(), 5)
 	// Simulate being on a sub-screen entered from AgentList.
 	m.state = ScreenAgentDetail
-	m.previousState = ScreenAgentList
+	m.navigationStack = []appState{ScreenAgentList}
 
 	newM, _ := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
 	result, ok := newM.(Model)
@@ -243,14 +243,16 @@ func TestUpdate_ESC_PopsToPreviousState(t *testing.T) {
 		"ESC MUST pop back to previousState")
 }
 
-// TestUpdate_ESC_FromAgentList_StaysAtRoot verifies that ESC on the root
-// screen does not panic and leaves the state unchanged (nothing to pop).
+// TestUpdate_ESC_FromAgentList_StaysAtRoot verifies that ESC on a clean root
+// screen quits without mutating the root state.
 func TestUpdate_ESC_FromAgentList_StaysAtRoot(t *testing.T) {
 	m := NewModel(fixtureConfig(t), sampleGrouped(), 5)
-	newM, _ := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	newM, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
 	result := newM.(Model)
 	assert.Equal(t, ScreenAgentList, result.state,
 		"ESC on the root screen must stay on the root screen")
+	require.NotNil(t, cmd)
+	assert.IsType(t, tea.QuitMsg{}, cmd())
 }
 
 // TestUpdate_S_NotDirty_StaysOnScreen verifies that pressing 's' when there
@@ -280,8 +282,8 @@ func TestUpdate_S_Dirty_TransitionsToSaveConfirm(t *testing.T) {
 	result := newM.(Model)
 	assert.Equal(t, ScreenSaveConfirm, result.state,
 		"'s' with dirty state MUST transition to ScreenSaveConfirm")
-	assert.Equal(t, ScreenAgentList, result.previousState,
-		"previousState must record the screen we came from so ESC works")
+	assert.Equal(t, []appState{ScreenAgentList}, result.navigationStack,
+		"navigation stack must record the screen we came from so ESC works")
 }
 
 // TestUpdate_OtherKey_NoOp verifies that an unmapped key does not change
@@ -338,4 +340,135 @@ func TestView_NilConfigDoesNotPanic(t *testing.T) {
 		out := m.View()
 		assert.NotEmpty(t, out)
 	})
+}
+
+func TestUpdate_NestedPickerEscReturnsDetailThenAgentList(t *testing.T) {
+	m := NewModel(fixtureConfig(t), richGrouped(), 5)
+	items := selectableItems(m)
+	m.agentCursor = indexOf(items, "code-reviewer")
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(Model)
+	require.Equal(t, ScreenAgentDetail, m.state)
+
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(Model)
+	require.Equal(t, ScreenModelSelection, m.state)
+
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	m = updated.(Model)
+	assert.Equal(t, ScreenAgentDetail, m.state)
+
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	m = updated.(Model)
+	assert.Equal(t, ScreenAgentList, m.state)
+}
+
+func TestUpdate_NestedFieldInputEscReturnsDetailThenAgentList(t *testing.T) {
+	m := NewModel(fixtureConfig(t), sampleGrouped(), 5)
+	items := selectableItems(m)
+	m.agentCursor = indexOf(items, "code-reviewer")
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(Model)
+	require.Equal(t, ScreenAgentDetail, m.state)
+	m.detailCursor = 1
+
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(Model)
+	require.Equal(t, ScreenFieldInput, m.state)
+
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	m = updated.(Model)
+	assert.Equal(t, ScreenAgentDetail, m.state)
+
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	m = updated.(Model)
+	assert.Equal(t, ScreenAgentList, m.state)
+}
+
+func TestUpdate_SaveConfirmRepeatedSDoesNotCorruptCancelTarget(t *testing.T) {
+	m := NewModel(fixtureConfig(t), sampleGrouped(), 5)
+	m.state = ScreenAgentDetail
+	m.navigationStack = []appState{ScreenAgentList}
+	m.dirty = true
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}})
+	m = updated.(Model)
+	require.Equal(t, ScreenSaveConfirm, m.state)
+
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}})
+	m = updated.(Model)
+	require.Equal(t, ScreenSaveConfirm, m.state)
+
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	m = updated.(Model)
+	assert.Equal(t, ScreenAgentDetail, m.state)
+}
+
+func TestModelPicker_PrintableQsjkReachFilterInput(t *testing.T) {
+	m := newModelSelectModel(t, "global", "")
+
+	for _, r := range []rune{'q', 's', 'j', 'k'} {
+		updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+		m = updated.(Model)
+	}
+
+	assert.Equal(t, ScreenModelSelection, m.state)
+	assert.Equal(t, "qsjk", m.filterInput.Value())
+}
+
+func TestFieldInput_PrintableQsReachTextInput(t *testing.T) {
+	m := newFieldInputModel(t, "code-reviewer", "color")
+
+	for _, r := range []rune{'q', 's'} {
+		updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+		m = updated.(Model)
+	}
+
+	assert.Equal(t, ScreenFieldInput, m.state)
+	assert.Equal(t, "qs", m.fieldInput.Value())
+}
+
+func TestAgentList_CursorRestoredAfterModelPicker(t *testing.T) {
+	m := NewModel(fixtureConfig(t), richGrouped(), 5)
+	items := selectableItems(m)
+	wantCursor := indexOf(items, "code-reviewer")
+	m.agentCursor = wantCursor
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(Model)
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(Model)
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	m = updated.(Model)
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	m = updated.(Model)
+
+	assert.Equal(t, ScreenAgentList, m.state)
+	assert.Equal(t, wantCursor, m.agentCursor)
+}
+
+func TestModelPicker_CursorIndependentFromAgentListCursor(t *testing.T) {
+	m := NewModel(fixtureConfig(t), richGrouped(), 5)
+	items := selectableItems(m)
+	wantAgentCursor := indexOf(items, "code-reviewer")
+	m.agentCursor = wantAgentCursor
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(Model)
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(Model)
+	require.Equal(t, ScreenModelSelection, m.state)
+	assert.Equal(t, 0, m.modelCursor, "model picker starts at its own first result")
+
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyDown})
+	m = updated.(Model)
+	assert.Equal(t, 1, m.modelCursor, "model picker cursor moves independently")
+
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	m = updated.(Model)
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	m = updated.(Model)
+	assert.Equal(t, wantAgentCursor, m.agentCursor)
 }

@@ -83,14 +83,15 @@ type Model struct {
 
 	// --- Navigation ---
 
-	// cursor is the currently highlighted row index on the active screen.
-	cursor int
+	// Each selectable screen owns its cursor so nested screens cannot overwrite
+	// the selection that must be restored when returning.
+	agentCursor  int
+	detailCursor int
+	modelCursor  int
 	// selectedAgent is the agent name being edited on ScreenAgentDetail.
 	selectedAgent string
-	// selectedField is the field index highlighted on ScreenAgentDetail.
-	selectedField int
-	// previousState is the screen to return to on ESC (single-deep stack).
-	previousState appState
+	// navigationStack stores immutable screen origins for nested transitions.
+	navigationStack []appState
 
 	// --- Agent list data (populated from config in NewModel) ---
 
@@ -155,7 +156,6 @@ func NewModel(cfg *config.Config, grouped map[string][]opencode.Model, backupCou
 
 	m := Model{
 		state:          ScreenAgentList,
-		previousState:  ScreenAgentList,
 		config:         cfg,
 		groupedModels:  grouped,
 		editableFields: append([]string(nil), editableFieldSchema...),
@@ -186,6 +186,21 @@ func NewModel(cfg *config.Config, grouped map[string][]opencode.Model, backupCou
 	return m
 }
 
+func (m *Model) pushScreen(next appState) {
+	m.navigationStack = append(m.navigationStack, m.state)
+	m.state = next
+}
+
+func (m *Model) popScreen() {
+	if len(m.navigationStack) == 0 {
+		m.state = ScreenAgentList
+		return
+	}
+	last := len(m.navigationStack) - 1
+	m.state = m.navigationStack[last]
+	m.navigationStack = m.navigationStack[:last]
+}
+
 // Init satisfies tea.Model. The TUI has no initial async work to schedule —
 // textinput cursor blink commands are issued when an input gains focus, not
 // at program start. Returning nil lets Bubbletea begin rendering immediately.
@@ -201,9 +216,9 @@ func (m *Model) RecordChange(target, field string, oldVal, newVal interface{}) {
 	m.dirty = true
 }
 
-// Update is the global key/message dispatcher. It handles only the keys that
-// apply on EVERY screen (q, Ctrl+C, ESC, 's'); screen-specific keys are
-// routed to per-screen handlers added in subsequent tasks.
+// Update is the global key/message dispatcher. Ctrl+C remains global, while
+// printable commands are intercepted only when no focused text input owns
+// them. Screen-specific keys are routed to their handlers.
 //
 // Spec: REQ-TUI-003 (quit/save), REQ-TUI-007 (save trigger), REQ-TUI-008
 // (ESC navigation).
@@ -239,7 +254,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 		}
 
-		// 'q': show quit confirmation if dirty, else quit
+		// Focused inputs and modals own every printable key.
+		if m.state == ScreenModelSelection {
+			return updateModelSelection(m, msg)
+		}
+		if m.state == ScreenFieldInput {
+			return updateFieldInput(m, msg)
+		}
+		if m.state == ScreenSaveConfirm {
+			return updateSaveConfirm(m, msg)
+		}
+
+		// Printable q/s are commands only on non-input screens.
 		if msg.Type == tea.KeyRunes && len(msg.Runes) == 1 && msg.Runes[0] == 'q' {
 			if m.dirty {
 				m.quitConfirm = true
@@ -251,8 +277,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// 's': transition to save-confirm if dirty
 		if msg.Type == tea.KeyRunes && len(msg.Runes) == 1 && msg.Runes[0] == 's' {
 			if m.dirty {
-				m.previousState = m.state
-				m.state = ScreenSaveConfirm
+				m.pushScreen(ScreenSaveConfirm)
 			}
 			return m, nil
 		}
@@ -265,21 +290,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return updateAgentList(m, msg)
 		case ScreenAgentDetail:
 			return updateAgentDetail(m, msg)
-		case ScreenModelSelection:
-			return updateModelSelection(m, msg)
-		case ScreenFieldInput:
-			return updateFieldInput(m, msg)
-		case ScreenSaveConfirm:
-			return updateSaveConfirm(m, msg)
-		}
-
-		// ESC pops the navigation stack (no-op on root)
-		if msg.Type == tea.KeyEsc || msg.Type == tea.KeyEscape {
-			if m.state == m.previousState {
-				return m, nil
-			}
-			m.state = m.previousState
-			return m, nil
 		}
 
 		return m, nil

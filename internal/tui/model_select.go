@@ -75,11 +75,11 @@ func applyFilter(m Model) Model {
 	})
 
 	// Clamp cursor to valid range.
-	if m.cursor >= len(m.filteredModels) {
-		m.cursor = len(m.filteredModels) - 1
+	if m.modelCursor >= len(m.filteredModels) {
+		m.modelCursor = len(m.filteredModels) - 1
 	}
-	if m.cursor < 0 {
-		m.cursor = 0
+	if m.modelCursor < 0 {
+		m.modelCursor = 0
 	}
 
 	return m
@@ -158,7 +158,7 @@ func viewModelSelection(m Model) string {
 				continue
 			}
 
-			isSelected := flatIdx == m.cursor
+			isSelected := flatIdx == m.modelCursor
 			isCurrent := model.FullName == currentModel
 
 			b.WriteString(renderModelRow(model, isSelected, isCurrent))
@@ -171,7 +171,7 @@ func viewModelSelection(m Model) string {
 	// --- Help footer (navigation hints) ---
 	b.WriteString(helpLine([]helpItem{
 		{"type", "filter"},
-		{"j/k", "navigate"},
+		{"↑/↓", "navigate"},
 		{"ENTER", "select"},
 		{"ESC", "cancel"},
 	}))
@@ -245,10 +245,10 @@ func currentModelFullName(m Model) string {
 // Keys:
 //   - typing:   updates filterInput, applies filter, resets cursor to 0
 //   - Backspace: deletes from filterInput, applies filter
-//   - j / Down: cursor down (stops at last filtered model)
-//   - k / Up:   cursor up (stops at 0)
-//   - ENTER:    selects model at cursor, persists to config, returns to previousState
-//   - ESC:      cancels, returns to previousState without changes
+//   - Down / Ctrl+N: cursor down (stops at last filtered model)
+//   - Up / Ctrl+P:   cursor up (stops at 0)
+//   - ENTER:         selects model at cursor, persists to config, pops origin
+//   - ESC:           cancels and pops the immutable origin without changes
 //
 // Spec: REQ-TUI-005 — interaction.
 func updateModelSelection(m Model, msg tea.Msg) (Model, tea.Cmd) {
@@ -258,9 +258,9 @@ func updateModelSelection(m Model, msg tea.Msg) (Model, tea.Cmd) {
 	}
 
 	switch {
-	// --- ESC: cancel, return to previousState ---
+	// --- ESC: cancel, return to immutable origin ---
 	case keyMsg.Type == tea.KeyEsc || keyMsg.Type == tea.KeyEscape:
-		m.state = m.previousState
+		m.popScreen()
 		return m, nil
 
 	// --- ENTER: select model at cursor ---
@@ -270,29 +270,27 @@ func updateModelSelection(m Model, msg tea.Msg) (Model, tea.Cmd) {
 	// --- Backspace: delete from filter, re-apply ---
 	case keyMsg.Type == tea.KeyBackspace:
 		m.filterInput, _ = m.filterInput.Update(keyMsg)
-		m.cursor = 0
+		m.modelCursor = 0
 		return applyFilter(m), nil
 
 	// --- Cursor down ---
-	case (keyMsg.Type == tea.KeyRunes && len(keyMsg.Runes) == 1 && keyMsg.Runes[0] == 'j') ||
-		keyMsg.Type == tea.KeyDown:
-		if len(m.filteredModels) > 0 && m.cursor < len(m.filteredModels)-1 {
-			m.cursor++
+	case keyMsg.Type == tea.KeyDown || keyMsg.Type == tea.KeyCtrlN:
+		if len(m.filteredModels) > 0 && m.modelCursor < len(m.filteredModels)-1 {
+			m.modelCursor++
 		}
 		return m, nil
 
 	// --- Cursor up ---
-	case (keyMsg.Type == tea.KeyRunes && len(keyMsg.Runes) == 1 && keyMsg.Runes[0] == 'k') ||
-		keyMsg.Type == tea.KeyUp:
-		if m.cursor > 0 {
-			m.cursor--
+	case keyMsg.Type == tea.KeyUp || keyMsg.Type == tea.KeyCtrlP:
+		if m.modelCursor > 0 {
+			m.modelCursor--
 		}
 		return m, nil
 
 	// --- Typing: update filter input, reset cursor ---
 	case keyMsg.Type == tea.KeyRunes && len(keyMsg.Runes) > 0:
 		m.filterInput, _ = m.filterInput.Update(keyMsg)
-		m.cursor = 0
+		m.modelCursor = 0
 		return applyFilter(m), nil
 
 	// --- Unmapped key: no-op ---
@@ -304,13 +302,13 @@ func updateModelSelection(m Model, msg tea.Msg) (Model, tea.Cmd) {
 // selectModelAtCursor validates and persists the model at the current cursor
 // position. For global edits it calls SetGlobalModel; for per-agent edits it
 // calls SetAgentField. Records the change so the save-confirm screen can
-// render a diff, marks dirty, and returns to previousState.
+// render a diff, marks dirty, and returns to the immutable origin.
 func selectModelAtCursor(m Model) Model {
-	if m.cursor < 0 || m.cursor >= len(m.filteredModels) {
+	if m.modelCursor < 0 || m.modelCursor >= len(m.filteredModels) {
 		return m
 	}
 
-	selected := m.filteredModels[m.cursor]
+	selected := m.filteredModels[m.modelCursor]
 
 	// Validate — should always pass since we're selecting from the list.
 	if !config.ValidateModel(selected.FullName, m.flatModels) {
@@ -329,7 +327,7 @@ func selectModelAtCursor(m Model) Model {
 		m.RecordChange(m.selectedAgent, "model", oldVal, selected.FullName)
 	}
 
-	m.state = m.previousState
+	m.popScreen()
 	return m
 }
 
@@ -340,12 +338,10 @@ func initModelSelectionScreen(m *Model) {
 	m.filterInput = textinput.New()
 	m.filterInput.Placeholder = "Type to filter..."
 	m.filterInput.Focus()
-	m.cursor = 0
+	m.modelCursor = 0
 	m.filteredModels = append([]opencode.Model(nil), m.flatModels...)
 	// Sort for deterministic initial display.
 	sort.Slice(m.filteredModels, func(i, j int) bool {
 		return m.filteredModels[i].FullName < m.filteredModels[j].FullName
 	})
 }
-
-

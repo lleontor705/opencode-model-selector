@@ -282,10 +282,10 @@ func TestSelectableItems_SortedAlphabetically(t *testing.T) {
 // Spec: REQ-TUI-003 — Happy path — j navigates down.
 func TestUpdateAgentList_J_MovesCursorDown(t *testing.T) {
 	m := NewModel(fixtureConfig(t), sampleGrouped(), 5)
-	assert.Equal(t, 0, m.cursor, "precondition: cursor starts at 0 (global)")
+	assert.Equal(t, 0, m.agentCursor, "precondition: cursor starts at 0 (global)")
 
 	newM, _ := updateAgentList(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
-	assert.Equal(t, 1, newM.cursor, "cursor MUST be 1 after pressing 'j'")
+	assert.Equal(t, 1, newM.agentCursor, "cursor MUST be 1 after pressing 'j'")
 }
 
 // TestUpdateAgentList_J_SkipsDisabledAgents verifies that moving down from the
@@ -298,8 +298,8 @@ func TestUpdateAgentList_J_SkipsDisabledAgents(t *testing.T) {
 	newM, _ := updateAgentList(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
 
 	items := selectableItems(newM)
-	require.True(t, newM.cursor < len(items), "cursor must be in bounds")
-	assert.Equal(t, "plan", items[newM.cursor],
+	require.True(t, newM.agentCursor < len(items), "cursor must be in bounds")
+	assert.Equal(t, "plan", items[newM.agentCursor],
 		"after 'j' from global, cursor MUST be on 'plan' (first non-disabled primary), NOT 'build' (disabled)")
 }
 
@@ -309,20 +309,20 @@ func TestUpdateAgentList_J_SkipsDisabledAgents(t *testing.T) {
 // Spec: REQ-TUI-003 — Happy path — k navigates up.
 func TestUpdateAgentList_K_MovesCursorUp(t *testing.T) {
 	m := NewModel(fixtureConfig(t), sampleGrouped(), 5)
-	m.cursor = 2
+	m.agentCursor = 2
 
 	newM, _ := updateAgentList(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'k'}})
-	assert.Equal(t, 1, newM.cursor, "cursor MUST be 1 after pressing 'k' from 2")
+	assert.Equal(t, 1, newM.agentCursor, "cursor MUST be 1 after pressing 'k' from 2")
 }
 
 // TestUpdateAgentList_K_AtTopStaysAtZero verifies that pressing 'k' at cursor 0
 // keeps the cursor at 0 (no negative wrap).
 func TestUpdateAgentList_K_AtTopStaysAtZero(t *testing.T) {
 	m := NewModel(fixtureConfig(t), sampleGrouped(), 5)
-	m.cursor = 0
+	m.agentCursor = 0
 
 	newM, _ := updateAgentList(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'k'}})
-	assert.Equal(t, 0, newM.cursor,
+	assert.Equal(t, 0, newM.agentCursor,
 		"cursor MUST stay at 0 when pressing 'k' at the top")
 }
 
@@ -333,7 +333,7 @@ func TestUpdateAgentList_K_AtTopStaysAtZero(t *testing.T) {
 func TestUpdateAgentList_DownArrow_MovesDown(t *testing.T) {
 	m := NewModel(fixtureConfig(t), sampleGrouped(), 5)
 	newM, _ := updateAgentList(m, tea.KeyMsg{Type: tea.KeyDown})
-	assert.Equal(t, 1, newM.cursor, "Down arrow MUST move cursor down")
+	assert.Equal(t, 1, newM.agentCursor, "Down arrow MUST move cursor down")
 }
 
 // TestUpdateAgentList_UpArrow_MovesUp verifies that the Up arrow key works the
@@ -342,9 +342,9 @@ func TestUpdateAgentList_DownArrow_MovesDown(t *testing.T) {
 // Spec: REQ-TUI-003 — Up arrow navigates up.
 func TestUpdateAgentList_UpArrow_MovesUp(t *testing.T) {
 	m := NewModel(fixtureConfig(t), sampleGrouped(), 5)
-	m.cursor = 2
+	m.agentCursor = 2
 	newM, _ := updateAgentList(m, tea.KeyMsg{Type: tea.KeyUp})
-	assert.Equal(t, 1, newM.cursor, "Up arrow MUST move cursor up")
+	assert.Equal(t, 1, newM.agentCursor, "Up arrow MUST move cursor up")
 }
 
 // TestUpdateAgentList_EnterOnGlobal_TransitionsToModelSelection verifies that
@@ -354,7 +354,7 @@ func TestUpdateAgentList_UpArrow_MovesUp(t *testing.T) {
 // Spec: REQ-TUI-003 — Happy path — ENTER on global opens model selection.
 func TestUpdateAgentList_EnterOnGlobal_TransitionsToModelSelection(t *testing.T) {
 	m := NewModel(fixtureConfig(t), sampleGrouped(), 5)
-	m.cursor = 0 // __global__
+	m.agentCursor = 0 // __global__
 
 	newM, _ := updateAgentList(m, tea.KeyMsg{Type: tea.KeyEnter})
 	assert.Equal(t, ScreenModelSelection, newM.state,
@@ -369,7 +369,7 @@ func TestUpdateAgentList_EnterOnGlobal_TransitionsToModelSelection(t *testing.T)
 func TestUpdateAgentList_EnterOnAgent_TransitionsToAgentDetail(t *testing.T) {
 	m := NewModel(fixtureConfig(t), sampleGrouped(), 5)
 	// cursor 1 = "plan" (first non-disabled primary agent)
-	m.cursor = 1
+	m.agentCursor = 1
 
 	newM, _ := updateAgentList(m, tea.KeyMsg{Type: tea.KeyEnter})
 	assert.Equal(t, ScreenAgentDetail, newM.state,
@@ -421,7 +421,7 @@ func TestUpdateAgentList_OtherKey_NoOp(t *testing.T) {
 	m := NewModel(fixtureConfig(t), sampleGrouped(), 5)
 	newM, cmd := updateAgentList(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
 	assert.Equal(t, ScreenAgentList, newM.state, "unmapped key MUST not change state")
-	assert.Equal(t, 0, newM.cursor, "unmapped key MUST not move cursor")
+	assert.Equal(t, 0, newM.agentCursor, "unmapped key MUST not move cursor")
 	assert.Nil(t, cmd, "unmapped key MUST produce a nil command")
 }
 
@@ -564,11 +564,11 @@ func TestUpdateAgentList_QuitConfirm_J_Ignored(t *testing.T) {
 	m := NewModel(fixtureConfig(t), sampleGrouped(), 5)
 	m.dirty = true
 	m.quitConfirm = true
-	m.cursor = 0
+	m.agentCursor = 0
 
 	newM, cmd := updateAgentList(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
 	assert.True(t, newM.quitConfirm, "'j' MUST NOT clear quitConfirm")
-	assert.Equal(t, 0, newM.cursor, "'j' MUST NOT move cursor during quitConfirm")
+	assert.Equal(t, 0, newM.agentCursor, "'j' MUST NOT move cursor during quitConfirm")
 	assert.Nil(t, cmd, "'j' MUST NOT produce a command during quitConfirm")
 }
 
@@ -578,11 +578,11 @@ func TestUpdateAgentList_QuitConfirm_K_Ignored(t *testing.T) {
 	m := NewModel(fixtureConfig(t), sampleGrouped(), 5)
 	m.dirty = true
 	m.quitConfirm = true
-	m.cursor = 2
+	m.agentCursor = 2
 
 	newM, cmd := updateAgentList(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'k'}})
 	assert.True(t, newM.quitConfirm, "'k' MUST NOT clear quitConfirm")
-	assert.Equal(t, 2, newM.cursor, "'k' MUST NOT move cursor during quitConfirm")
+	assert.Equal(t, 2, newM.agentCursor, "'k' MUST NOT move cursor during quitConfirm")
 	assert.Nil(t, cmd, "'k' MUST NOT produce a command during quitConfirm")
 }
 
@@ -622,7 +622,7 @@ func TestViewAgentList_QuitConfirm_ShowsYNOptions(t *testing.T) {
 func TestUpdateAgentList_CancelThenEnter_TransitionsCleanly(t *testing.T) {
 	m := NewModel(fixtureConfig(t), sampleGrouped(), 5)
 	m.dirty = true
-	m.cursor = 1 // plan
+	m.agentCursor = 1 // plan
 
 	// Step 1: 'q' with dirty → quitConfirm=true
 	m1, _ := updateAgentList(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'q'}})

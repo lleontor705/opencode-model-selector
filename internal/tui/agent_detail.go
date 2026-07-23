@@ -80,7 +80,7 @@ func viewAgentDetail(m Model) string {
 		hint := fieldContextHint(field)
 
 		prefix := "  "
-		if i == m.selectedField {
+		if i == m.detailCursor {
 			prefix = SelectedPrefix.Render("▶ ") + " "
 		}
 
@@ -104,7 +104,7 @@ func viewAgentDetail(m Model) string {
 			line += "  " + FieldHint.Render(hint)
 		}
 
-		if i == m.selectedField {
+		if i == m.detailCursor {
 			line = SelectedStyle.Render(line)
 		}
 		b.WriteString(line)
@@ -193,29 +193,29 @@ func formatFieldValue(val interface{}) string {
 //   - ENTER:    model → ScreenModelSelection; temperature/top_p/color/steps →
 //     ScreenFieldInput; disable → toggle (same as SPACE)
 //   - SPACE:    disable → toggle; other fields → no-op
-//   - ESC:      pop to previousState
+//   - ESC:      pop the navigation stack
 //
 // Spec: REQ-TUI-004 — interaction.
 func updateAgentDetail(m Model, msg tea.KeyMsg) (Model, tea.Cmd) {
 	switch {
 	// --- ESC: pop navigation stack ---
 	case msg.Type == tea.KeyEsc || msg.Type == tea.KeyEscape:
-		m.state = m.previousState
+		m.popScreen()
 		return m, nil
 
 	// --- Cursor down ---
 	case (msg.Type == tea.KeyRunes && len(msg.Runes) == 1 && msg.Runes[0] == 'j') ||
 		msg.Type == tea.KeyDown:
-		if m.selectedField < len(m.editableFields)-1 {
-			m.selectedField++
+		if m.detailCursor < len(m.editableFields)-1 {
+			m.detailCursor++
 		}
 		return m, nil
 
 	// --- Cursor up ---
 	case (msg.Type == tea.KeyRunes && len(msg.Runes) == 1 && msg.Runes[0] == 'k') ||
 		msg.Type == tea.KeyUp:
-		if m.selectedField > 0 {
-			m.selectedField--
+		if m.detailCursor > 0 {
+			m.detailCursor--
 		}
 		return m, nil
 
@@ -246,14 +246,12 @@ func handleEnterOnField(m Model) Model {
 
 	switch field {
 	case "model":
-		m.previousState = ScreenAgentDetail
-		m.state = ScreenModelSelection
+		m.pushScreen(ScreenModelSelection)
 		m.fieldEditing = "model"
 		initModelSelectionScreen(&m)
 
 	case "temperature", "top_p", "color", "steps":
-		m.previousState = ScreenAgentDetail
-		m.state = ScreenFieldInput
+		m.pushScreen(ScreenFieldInput)
 		m.fieldEditing = field
 		initFieldInputScreen(&m, field)
 
@@ -264,13 +262,13 @@ func handleEnterOnField(m Model) Model {
 	return m
 }
 
-// currentField returns the field name at the current selectedField index, or an
+// currentField returns the field name at the current detail cursor index, or an
 // empty string if the index is out of bounds.
 func currentField(m Model) string {
-	if m.selectedField < 0 || m.selectedField >= len(m.editableFields) {
+	if m.detailCursor < 0 || m.detailCursor >= len(m.editableFields) {
 		return ""
 	}
-	return m.editableFields[m.selectedField]
+	return m.editableFields[m.detailCursor]
 }
 
 // toggleDisable flips the agent's disable flag and records the change. If the

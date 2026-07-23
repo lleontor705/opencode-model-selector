@@ -29,7 +29,7 @@ func newFieldInputModel(t *testing.T, agentName, fieldName string) Model {
 	t.Helper()
 	m := NewModel(fixtureConfig(t), sampleGrouped(), 5)
 	m.state = ScreenFieldInput
-	m.previousState = ScreenAgentDetail
+	m.navigationStack = []appState{ScreenAgentDetail}
 	m.selectedAgent = agentName
 	m.fieldEditing = fieldName
 	m.fieldInput.Focus()

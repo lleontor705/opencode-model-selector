@@ -30,7 +30,7 @@ func newSaveConfirmModel(t *testing.T, dirty bool) Model {
 	t.Helper()
 	m := NewModel(fixtureConfig(t), sampleGrouped(), 5)
 	m.state = ScreenSaveConfirm
-	m.previousState = ScreenAgentList
+	m.navigationStack = []appState{ScreenAgentList}
 	m.dirty = dirty
 	return m
 }
@@ -62,7 +62,7 @@ func writableSaveConfirmModel(t *testing.T, backupCount int) Model {
 	cfg := writableConfig(t)
 	m := NewModel(cfg, sampleGrouped(), backupCount)
 	m.state = ScreenSaveConfirm
-	m.previousState = ScreenAgentList
+	m.navigationStack = []appState{ScreenAgentList}
 	// Make an actual change to the config so Save() has content to write.
 	require.NoError(t, m.config.SetAgentField("code-reviewer", "temperature", 0.7))
 	m.dirty = true
@@ -104,7 +104,7 @@ func TestUpdateSaveConfirm_NotDirty_NoWriteNoBackup(t *testing.T) {
 
 	m := NewModel(cfg, sampleGrouped(), 5)
 	m.state = ScreenSaveConfirm
-	m.previousState = ScreenAgentList
+	m.navigationStack = []appState{ScreenAgentList}
 	m.dirty = false
 
 	newM, _ := updateSaveConfirm(m, tea.KeyMsg{Type: tea.KeyEnter})
@@ -225,7 +225,7 @@ func TestUpdateSaveConfirm_SaveFails_ShowsErrorStaysDirty(t *testing.T) {
 
 	m := NewModel(cfg, sampleGrouped(), 0) // backupCount=0 to test Save failure directly
 	m.state = ScreenSaveConfirm
-	m.previousState = ScreenAgentList
+	m.navigationStack = []appState{ScreenAgentList}
 	require.NoError(t, m.config.SetAgentField("code-reviewer", "temperature", 0.7))
 	m.dirty = true
 
@@ -243,7 +243,7 @@ func TestUpdateSaveConfirm_BackupFails_ShowsErrorStaysDirty(t *testing.T) {
 
 	m := NewModel(cfg, sampleGrouped(), 5) // backupCount>0 to trigger backup
 	m.state = ScreenSaveConfirm
-	m.previousState = ScreenAgentList
+	m.navigationStack = []appState{ScreenAgentList}
 	m.dirty = true
 
 	newM, _ := updateSaveConfirm(m, tea.KeyMsg{Type: tea.KeyEnter})
@@ -355,7 +355,7 @@ func TestViewSaveConfirm_NoChanges_OmitsDiff(t *testing.T) {
 
 func TestSelectModelAtCursor_RecordsChange(t *testing.T) {
 	m := newModelSelectModel(t, "global", "")
-	m.cursor = 0
+	m.modelCursor = 0
 
 	before, _ := m.config.GetGlobalModel()
 	newM := selectModelAtCursor(m)
@@ -376,7 +376,7 @@ func TestSelectModelAtCursor_RecordsChange(t *testing.T) {
 
 func TestSelectModelAtCursor_PerAgent_RecordsChange(t *testing.T) {
 	m := newModelSelectModel(t, "model", "code-reviewer")
-	m.cursor = 0
+	m.modelCursor = 0
 
 	before, _ := m.config.GetAgentField("code-reviewer", "model")
 	newM := selectModelAtCursor(m)
@@ -420,7 +420,7 @@ func TestPerformSave_ClearsChanges(t *testing.T) {
 func TestCommitFieldInput_RecordsChange(t *testing.T) {
 	m := NewModel(fixtureConfig(t), sampleGrouped(), 5)
 	m.state = ScreenFieldInput
-	m.previousState = ScreenAgentDetail
+	m.navigationStack = []appState{ScreenAgentDetail}
 	m.selectedAgent = "code-reviewer"
 	m.fieldEditing = "temperature"
 	m.fieldInput.SetValue("0.5")

@@ -157,7 +157,7 @@ func viewAgentList(m Model) string {
 	if val, ok := m.config.GetGlobalModel(); ok && val != "" {
 		globalModelVal = val
 	}
-	isGlobalSelected := selectableIdx == m.cursor
+	isGlobalSelected := selectableIdx == m.agentCursor
 	b.WriteString(renderGlobalRow(globalModelVal, isGlobalSelected))
 	b.WriteByte('\n')
 	selectableIdx++
@@ -169,7 +169,7 @@ func viewAgentList(m Model) string {
 		isDisabled := disabled[name]
 		isSelected := false
 		if !isDisabled {
-			if selectableIdx == m.cursor {
+			if selectableIdx == m.agentCursor {
 				isSelected = true
 			}
 			selectableIdx++
@@ -185,7 +185,7 @@ func viewAgentList(m Model) string {
 		isDisabled := disabled[name]
 		isSelected := false
 		if !isDisabled {
-			if selectableIdx == m.cursor {
+			if selectableIdx == m.agentCursor {
 				isSelected = true
 			}
 			selectableIdx++
@@ -372,17 +372,18 @@ func updateAgentList(m Model, msg tea.KeyMsg) (Model, tea.Cmd) {
 		}
 		return m, tea.Quit
 
-	// --- ESC: pop to previousState (no-op on root since previousState defaults
-	// to ScreenAgentList) ---
+	// --- ESC: quit from the root, guarded when there are unsaved changes ---
 	case msg.Type == tea.KeyEsc || msg.Type == tea.KeyEscape:
-		m.state = m.previousState
-		return m, nil
+		if m.dirty {
+			m.quitConfirm = true
+			return m, nil
+		}
+		return m, tea.Quit
 
 	// --- Save ---
 	case msg.Type == tea.KeyRunes && len(msg.Runes) == 1 && msg.Runes[0] == 's':
 		if m.dirty {
-			m.previousState = m.state
-			m.state = ScreenSaveConfirm
+			m.pushScreen(ScreenSaveConfirm)
 		}
 		return m, nil
 
@@ -390,34 +391,32 @@ func updateAgentList(m Model, msg tea.KeyMsg) (Model, tea.Cmd) {
 	case (msg.Type == tea.KeyRunes && len(msg.Runes) == 1 && msg.Runes[0] == 'j') ||
 		msg.Type == tea.KeyDown:
 		items := selectableItems(m)
-		if len(items) > 0 && m.cursor < len(items)-1 {
-			m.cursor++
+		if len(items) > 0 && m.agentCursor < len(items)-1 {
+			m.agentCursor++
 		}
 		return m, nil
 
 	// --- Cursor up ---
 	case (msg.Type == tea.KeyRunes && len(msg.Runes) == 1 && msg.Runes[0] == 'k') ||
 		msg.Type == tea.KeyUp:
-		if m.cursor > 0 {
-			m.cursor--
+		if m.agentCursor > 0 {
+			m.agentCursor--
 		}
 		return m, nil
 
 	// --- ENTER: transition ---
 	case msg.Type == tea.KeyEnter:
 		items := selectableItems(m)
-		if m.cursor >= 0 && m.cursor < len(items) {
-			item := items[m.cursor]
+		if m.agentCursor >= 0 && m.agentCursor < len(items) {
+			item := items[m.agentCursor]
 			if item == globalItemKey {
-				m.previousState = m.state
-				m.state = ScreenModelSelection
+				m.pushScreen(ScreenModelSelection)
 				m.fieldEditing = "global"
 				m.quitConfirm = false
 				initModelSelectionScreen(&m)
 			} else {
 				m.selectedAgent = item
-				m.previousState = m.state
-				m.state = ScreenAgentDetail
+				m.pushScreen(ScreenAgentDetail)
 				m.quitConfirm = false
 			}
 		}
