@@ -12,7 +12,10 @@
 package tui
 
 import (
+	"os"
+	"regexp"
 	"sort"
+	"strings"
 	"testing"
 
 	"github.com/charmbracelet/bubbles/textinput"
@@ -62,6 +65,76 @@ func newModelSelectModel(t *testing.T, fieldEditing, agentName string) Model {
 		return m.filteredModels[i].FullName < m.filteredModels[j].FullName
 	})
 	return m
+}
+
+var testANSISequence = regexp.MustCompile(`\x1b\[[0-?]*[ -/]*[@-~]`)
+
+func realFixtureGrouped(t *testing.T) map[string][]opencode.Model {
+	t.Helper()
+	data, err := os.ReadFile("../../test/fixtures/models_output.txt")
+	require.NoError(t, err)
+	models := opencode.ParseModelsOutput(string(data))
+	require.Len(t, models, 53)
+	return opencode.GroupByProvider(models)
+}
+
+func newModelSelectWithGrouped(t *testing.T, grouped map[string][]opencode.Model) Model {
+	t.Helper()
+	m := NewModel(fixtureConfig(t), grouped, 5)
+	m.state = ScreenModelSelection
+	m.navigationStack = []appState{ScreenAgentList}
+	m.fieldEditing = "global"
+	initModelSelectionScreen(&m)
+	return m
+}
+
+// selectedVisibleModel returns the identity printed on the highlighted row.
+// It strips terminal control sequences and reads semantic row text instead of
+// calculating positions from ANSI byte lengths.
+func selectedVisibleModel(t *testing.T, m Model) string {
+	t.Helper()
+	content, _, _ := renderModelSelectionContent(m)
+	if m.width > 0 && m.height > 0 {
+		syncModelViewport(&m)
+		content = m.modelViewport.View()
+	}
+	for _, line := range strings.Split(testANSISequence.ReplaceAllString(content, ""), "\n") {
+		line = strings.TrimSpace(line)
+		if !strings.HasPrefix(line, "▶") {
+			continue
+		}
+		fields := strings.Fields(strings.TrimSpace(strings.TrimPrefix(line, "▶")))
+		require.NotEmpty(t, fields, "highlighted row must contain a model identity")
+		return fields[0]
+	}
+	require.FailNow(t, "highlighted model row is not visible")
+	return ""
+}
+
+func appliedModelAtCursor(t *testing.T, m Model) string {
+	t.Helper()
+	updated, _ := updateModelSelection(m, tea.KeyMsg{Type: tea.KeyEnter})
+	applied, ok := updated.config.GetGlobalModel()
+	require.True(t, ok)
+	return applied
+}
+
+func assertVisibleModelIsApplied(t *testing.T, m Model) {
+	t.Helper()
+	visible := selectedVisibleModel(t, m)
+	assert.Equal(t, visible, appliedModelAtCursor(t, m),
+		"Enter must apply the visibly highlighted model at cursor %d", m.modelCursor)
+}
+
+func indexOfProviderBoundary(t *testing.T, models []opencode.Model, left, right string) int {
+	t.Helper()
+	for i := 0; i+1 < len(models); i++ {
+		if models[i].Provider == left && models[i+1].Provider == right {
+			return i
+		}
+	}
+	require.FailNowf(t, "provider boundary not found", "%s -> %s", left, right)
+	return -1
 }
 
 // ---------------------------------------------------------------------------
@@ -474,6 +547,147 @@ func TestUpdateModelSelection_Enter_SelectsCorrectModel(t *testing.T) {
 	require.True(t, ok)
 	assert.Equal(t, expected, gm,
 		"ENTER MUST select the model at cursor position (%q), got %q", expected, gm)
+}
+
+func TestModelSelection_RealFixtureProviderEndpointsApplyHighlightedModel(t *testing.T) {
+	m := newModelSelectWithGrouped(t, realFixtureGrouped(t))
+
+	providerIndexes := make(map[string][]int)
+	for i, model := range m.filteredModels {
+		providerIndexes[model.Provider] = append(providerIndexes[model.Provider], i)
+	}
+	for provider, indexes := range providerIndexes {
+		for _, index := range []int{indexes[0], indexes[len(indexes)-1]} {
+			t.Run(provider+"/"+m.filteredModels[index].ID, func(t *testing.T) {
+				candidate := m
+				candidate.modelCursor = index
+				assertVisibleModelIsApplied(t, candidate)
+			})
+		}
+	}
+}
+
+func TestModelSelection_RealFixtureAll53RowsApplyHighlightedModel(t *testing.T) {
+	m := newModelSelectWithGrouped(t, realFixtureGrouped(t))
+	require.Len(t, m.filteredModels, 53)
+
+	mismatches := 0
+	for index := range m.filteredModels {
+		candidate := m
+		candidate.modelCursor = index
+		if selectedVisibleModel(t, candidate) != appliedModelAtCursor(t, candidate) {
+			mismatches++
+		}
+	}
+	assert.Zero(t, mismatches, "all 53 fixture rows must apply their highlighted identity")
+}
+
+func TestModelSelection_ProviderBoundariesApplyHighlightedModel(t *testing.T) {
+	m := newModelSelectWithGrouped(t, realFixtureGrouped(t))
+	boundaries := [][2]string{
+		{"openai", "opencode"},
+		{"opencode", "opencode-go"},
+		{"opencode-go", "xiaomi-token-plan-sgp"},
+	}
+
+	for _, boundary := range boundaries {
+		boundary := boundary
+		t.Run(boundary[0]+"_to_"+boundary[1], func(t *testing.T) {
+			left := indexOfProviderBoundary(t, m.filteredModels, boundary[0], boundary[1])
+			for _, index := range []int{left, left + 1} {
+				candidate := m
+				candidate.modelCursor = index
+				assertVisibleModelIsApplied(t, candidate)
+			}
+		})
+	}
+}
+
+func TestModelSelection_OpencodeFilterAppliesAll21HighlightedModels(t *testing.T) {
+	m := newModelSelectWithGrouped(t, realFixtureGrouped(t))
+	m.filterInput.SetValue("opencode")
+	m = applyFilter(m)
+	require.Len(t, m.filteredModels, 21)
+
+	mismatches := 0
+	for index := range m.filteredModels {
+		candidate := m
+		candidate.modelCursor = index
+		if selectedVisibleModel(t, candidate) != appliedModelAtCursor(t, candidate) {
+			mismatches++
+		}
+	}
+	assert.Zero(t, mismatches, "all 21 filtered rows must apply their highlighted identity")
+}
+
+func TestModelSelection_PrefixProvidersApplyHighlightedModel(t *testing.T) {
+	grouped := opencode.GroupByProvider([]opencode.Model{
+		{Provider: "opencode-go", ID: "z-last", FullName: "opencode-go/z-last"},
+		{Provider: "opencode", ID: "z-last", FullName: "opencode/z-last"},
+		{Provider: "opencode-go", ID: "a-first", FullName: "opencode-go/a-first"},
+		{Provider: "opencode", ID: "a-first", FullName: "opencode/a-first"},
+	})
+	m := newModelSelectWithGrouped(t, grouped)
+
+	for index := range m.filteredModels {
+		candidate := m
+		candidate.modelCursor = index
+		assertVisibleModelIsApplied(t, candidate)
+	}
+}
+
+func TestModelSelection_ScrolledViewportNavigationAppliesHighlightedModel(t *testing.T) {
+	for _, key := range []struct {
+		name string
+		msg  tea.KeyMsg
+	}{
+		{name: "Down", msg: tea.KeyMsg{Type: tea.KeyDown}},
+		{name: "CtrlN", msg: tea.KeyMsg{Type: tea.KeyCtrlN}},
+	} {
+		t.Run(key.name, func(t *testing.T) {
+			m := newModelSelectWithGrouped(t, realFixtureGrouped(t))
+			m.modelCursor = 20
+			m = resizeModel(t, m, 80, 24)
+			m, _ = updateModelSelection(m, key.msg)
+			assertVisibleModelIsApplied(t, m)
+		})
+	}
+}
+
+func TestModelSelection_ResizePreservesCursorIdentity(t *testing.T) {
+	m := newModelSelectWithGrouped(t, realFixtureGrouped(t))
+	m.modelCursor = 21
+	m = resizeModel(t, m, 80, 24)
+	before := selectedVisibleModel(t, m)
+
+	m = resizeModel(t, m, 100, 30)
+	after := selectedVisibleModel(t, m)
+	assert.Equal(t, before, after, "resize must preserve the highlighted model identity")
+	assertVisibleModelIsApplied(t, m)
+}
+
+func TestModelSelection_ReopenMarksExactlyTheAppliedVisibleModelCurrent(t *testing.T) {
+	m := newModelSelectWithGrouped(t, realFixtureGrouped(t))
+	m.modelCursor = 21
+	visible := selectedVisibleModel(t, m)
+	applied := appliedModelAtCursor(t, m)
+	require.Equal(t, visible, applied)
+
+	reopened := NewModel(m.config, realFixtureGrouped(t), 5)
+	reopened.state = ScreenModelSelection
+	reopened.fieldEditing = "global"
+	initModelSelectionScreen(&reopened)
+	content, _, _ := renderModelSelectionContent(reopened)
+	plain := testANSISequence.ReplaceAllString(content, "")
+	currentRows := make([]string, 0, 1)
+	for _, line := range strings.Split(plain, "\n") {
+		if strings.Contains(line, "★ current") {
+			currentRows = append(currentRows, strings.TrimSpace(line))
+		}
+	}
+	require.Len(t, currentRows, 1, "exactly one visible model must have the current badge")
+	assert.Contains(t, currentRows[0], applied,
+		"the current badge must be on the model that Enter applied")
 }
 
 // ---------------------------------------------------------------------------
