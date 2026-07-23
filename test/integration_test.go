@@ -1153,17 +1153,17 @@ func projectRoot(t *testing.T) string {
 	return abs
 }
 
-// buildBinary compiles the cmd/main.go entrypoint to a temp executable and
+// buildBinary compiles the root main.go entrypoint to a temp executable and
 // returns its path. The binary is cleaned up automatically via t.TempDir().
 func buildBinary(t *testing.T) string {
 	t.Helper()
 	binaryPath := filepath.Join(t.TempDir(), "opencode-model-selector-test"+binaryExt())
 
-	cmd := exec.Command("go", "build", "-o", binaryPath, "./cmd")
+	cmd := exec.Command("go", "build", "-o", binaryPath, ".")
 	cmd.Dir = projectRoot(t)
 	out, err := cmd.CombinedOutput()
 	require.NoError(t, err,
-		"go build ./cmd failed: %s", string(out))
+		"go build . failed: %s", string(out))
 	require.FileExists(t, binaryPath, "built binary must exist")
 	return binaryPath
 }

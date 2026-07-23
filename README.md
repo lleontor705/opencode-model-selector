@@ -67,7 +67,7 @@ Manually editing `opencode.json` to assign models to agents is error-prone. You 
 
 ```bash
 # Install
-go install github.com/lleontor705/opencode-model-selector/cmd@latest
+go install github.com/lleontor705/opencode-model-selector@latest
 
 # Run
 opencode-model-selector                # interactive TUI
@@ -126,7 +126,7 @@ opencode-model-selector --backup-count 10
 ## Architecture
 
 ```
-cmd/                    CLI entry point (flag parsing + dispatch)
+main.go                 CLI entry point (flag parsing + dispatch)
 internal/
   config/               Config loading, validation, backup, agent field access
   opencode/             OpenCode CLI detection, model retrieval, provider grouping

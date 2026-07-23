@@ -3,7 +3,7 @@
 ## go install (Recommended)
 
 ```bash
-go install github.com/lleontor705/opencode-model-selector/cmd@latest
+go install github.com/lleontor705/opencode-model-selector@latest
 ```
 
 Binary goes to `$GOPATH/bin/opencode-model-selector` (typically `~/go/bin/` or `%USERPROFILE%\go\bin\`).
@@ -13,13 +13,13 @@ Binary goes to `$GOPATH/bin/opencode-model-selector` (typically `~/go/bin/` or `
 ```bash
 git clone https://github.com/lleontor705/opencode-model-selector.git
 cd opencode-model-selector
-go build -ldflags="-s -w" -o opencode-model-selector ./cmd
+go build -ldflags="-s -w" -o opencode-model-selector .
 ```
 
 With version stamp:
 
 ```bash
-go build -ldflags="-s -w -X main.version=local-$(git describe --tags --always)" -o opencode-model-selector ./cmd
+go build -ldflags="-s -w -X main.version=local-$(git describe --tags --always)" -o opencode-model-selector .
 ```
 
 ## Pre-built Binaries
