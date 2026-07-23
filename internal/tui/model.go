@@ -50,6 +50,18 @@ var editableFieldSchema = []string{
 	"model", "temperature", "top_p", "color", "steps", "disable",
 }
 
+// Change records a single in-memory mutation that will be persisted on save.
+// Target is "global" for the global default model or the agent name for
+// per-agent edits; Field is the config key (model, temperature, ...). OldVal
+// and NewVal carry the raw interface{} values from the config layer so the
+// save-confirm screen can render a human-readable diff.
+type Change struct {
+	Target string
+	Field  string
+	OldVal interface{}
+	NewVal interface{}
+}
+
 // Model is the root Bubbletea model. It carries ALL TUI state in a single
 // value; screen handlers (added in later tasks) read and write these fields
 // via pointer receivers on helper methods, while Update/View use value
@@ -102,6 +114,10 @@ type Model struct {
 
 	// dirty is true when any in-memory edit has not yet been persisted.
 	dirty bool
+	// changes records every in-memory mutation since the last successful
+	// save. The save-confirm screen renders this slice as a diff so the
+	// user can verify what will be written to disk.
+	changes []Change
 	// quitConfirm is true when the "quit anyway?" confirmation overlay is
 	// active on the Agent List screen. It is a sub-state of ScreenAgentList,
 	// not a full screen. When true, only y/Y/ENTER (confirm) and n/N/ESC
@@ -175,6 +191,14 @@ func NewModel(cfg *config.Config, grouped map[string][]opencode.Model, backupCou
 // at program start. Returning nil lets Bubbletea begin rendering immediately.
 func (m Model) Init() tea.Cmd {
 	return nil
+}
+
+// RecordChange appends a Change entry to the model and marks it dirty. Call
+// this from every mutation site AFTER the config has been updated so OldVal
+// reflects the previous value and NewVal reflects the new one.
+func (m *Model) RecordChange(target, field string, oldVal, newVal interface{}) {
+	m.changes = append(m.changes, Change{Target: target, Field: field, OldVal: oldVal, NewVal: newVal})
+	m.dirty = true
 }
 
 // Update is the global key/message dispatcher. It handles only the keys that

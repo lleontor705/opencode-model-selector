@@ -225,8 +225,8 @@ func updateFieldInput(m Model, msg tea.Msg) (Model, tea.Cmd) {
 }
 
 // commitFieldInput validates the current fieldInput value, commits it to the
-// config on success, or sets saveError on failure. On success it marks the
-// model dirty and transitions back to previousState.
+// config on success, or sets saveError on failure. On success it records the
+// change, marks the model dirty, and transitions back to previousState.
 func commitFieldInput(m Model) Model {
 	value := m.fieldInput.Value()
 	parsed, err := validateFieldInput(m.fieldEditing, value)
@@ -235,6 +235,10 @@ func commitFieldInput(m Model) Model {
 		return m
 	}
 
+	// Capture the previous value BEFORE writing so the diff reflects the
+	// actual mutation, not the new value on both sides.
+	oldVal, _ := m.config.GetAgentField(m.selectedAgent, m.fieldEditing)
+
 	// Commit to config. SetAgentField may reject if the agent is disabled,
 	// but disabled agents are not navigable to this screen in normal flow.
 	if err := m.config.SetAgentField(m.selectedAgent, m.fieldEditing, parsed); err != nil {
@@ -242,7 +246,7 @@ func commitFieldInput(m Model) Model {
 		return m
 	}
 
-	m.dirty = true
+	m.RecordChange(m.selectedAgent, m.fieldEditing, oldVal, parsed)
 	m.saveError = ""
 	m.state = m.previousState
 	return m

@@ -303,7 +303,8 @@ func updateModelSelection(m Model, msg tea.Msg) (Model, tea.Cmd) {
 
 // selectModelAtCursor validates and persists the model at the current cursor
 // position. For global edits it calls SetGlobalModel; for per-agent edits it
-// calls SetAgentField. Marks dirty and returns to previousState.
+// calls SetAgentField. Records the change so the save-confirm screen can
+// render a diff, marks dirty, and returns to previousState.
 func selectModelAtCursor(m Model) Model {
 	if m.cursor < 0 || m.cursor >= len(m.filteredModels) {
 		return m
@@ -317,14 +318,17 @@ func selectModelAtCursor(m Model) Model {
 	}
 
 	if m.fieldEditing == "global" {
+		oldVal, _ := m.config.GetGlobalModel()
 		m.config.SetGlobalModel(selected.FullName)
+		m.RecordChange("global", "model", oldVal, selected.FullName)
 	} else {
+		oldVal, _ := m.config.GetAgentField(m.selectedAgent, "model")
 		// Per-agent model. May error if the agent is disabled, but the
 		// config layer handles that — we proceed only on success.
 		_ = m.config.SetAgentField(m.selectedAgent, "model", selected.FullName)
+		m.RecordChange(m.selectedAgent, "model", oldVal, selected.FullName)
 	}
 
-	m.dirty = true
 	m.state = m.previousState
 	return m
 }
