@@ -25,7 +25,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"opencode-model-selector/internal/config"
+	"github.com/lleontor705/opencode-model-selector/internal/config"
 )
 
 // viewSaveConfirm renders the Save Confirm screen. The layout is:

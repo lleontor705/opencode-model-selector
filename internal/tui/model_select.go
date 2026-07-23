@@ -18,8 +18,8 @@ import (
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 
-	"opencode-model-selector/internal/config"
-	"opencode-model-selector/internal/opencode"
+	"github.com/lleontor705/opencode-model-selector/internal/config"
+	"github.com/lleontor705/opencode-model-selector/internal/opencode"
 )
 
 // matchesFilter checks if a model matches the filter text. The match is a

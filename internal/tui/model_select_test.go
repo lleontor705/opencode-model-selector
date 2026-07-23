@@ -20,7 +20,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"opencode-model-selector/internal/opencode"
+	"github.com/lleontor705/opencode-model-selector/internal/opencode"
 )
 
 // richGrouped returns a multi-provider, multi-model map suitable for model

@@ -39,9 +39,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"opencode-model-selector/internal/config"
-	"opencode-model-selector/internal/opencode"
-	"opencode-model-selector/internal/tui"
+	"github.com/lleontor705/opencode-model-selector/internal/config"
+	"github.com/lleontor705/opencode-model-selector/internal/opencode"
+	"github.com/lleontor705/opencode-model-selector/internal/tui"
 )
 
 // ---------------------------------------------------------------------------
