@@ -114,7 +114,15 @@ func viewAgentList(m Model) string {
 
 	// --- Header banner ---
 	b.WriteString(renderHeader(m, "Agents"))
-	b.WriteString("\n\n")
+
+	// --- Success banner (if just saved) ---
+	if m.saveSuccess {
+		b.WriteString("\n")
+		b.WriteString(SuccessStyle.Render("✓ Saved successfully!"))
+		b.WriteString("\n")
+	}
+
+	b.WriteString("\n")
 
 	// Build a disabled set for O(1) lookups during rendering.
 	disabled := make(map[string]bool, len(m.disabledAgents))
