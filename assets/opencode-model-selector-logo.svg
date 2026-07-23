@@ -1,0 +1,99 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 260" fill="none">
+  <defs>
+    <linearGradient id="neural" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#bb9af7"/>
+      <stop offset="50%" stop-color="#7aa2f7"/>
+      <stop offset="100%" stop-color="#2ac3de"/>
+    </linearGradient>
+    <linearGradient id="glow" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#2ac3de" stop-opacity="0.3"/>
+      <stop offset="100%" stop-color="#16161e" stop-opacity="0"/>
+    </linearGradient>
+    <filter id="shadow">
+      <feDropShadow dx="0" dy="2" stdDeviation="4" flood-color="#2ac3de" flood-opacity="0.3"/>
+    </filter>
+  </defs>
+
+  <!-- Background -->
+  <rect width="800" height="260" rx="16" fill="#16161e"/>
+
+  <!-- Subtle grid pattern -->
+  <g opacity="0.05" stroke="#7aa2f7" stroke-width="0.5">
+    <line x1="0" y1="40" x2="800" y2="40"/>
+    <line x1="0" y1="80" x2="800" y2="80"/>
+    <line x1="0" y1="120" x2="800" y2="120"/>
+    <line x1="0" y1="160" x2="800" y2="160"/>
+    <line x1="0" y1="200" x2="800" y2="200"/>
+  </g>
+
+  <!-- Model selector icon: list/grid with neural connections -->
+  <g transform="translate(60, 50)" filter="url(#shadow)">
+    <!-- Grid list container -->
+    <rect x="10" y="20" width="140" height="130" rx="12" stroke="url(#neural)" stroke-width="2" fill="none" opacity="0.3"/>
+
+    <!-- Row 1 -->
+    <rect x="25" y="35" width="50" height="14" rx="7" fill="#bb9af7" opacity="0.9"/>
+    <circle cx="90" cy="42" r="5" fill="#2ac3de"/>
+    <line x1="100" y1="42" x2="140" y2="42" stroke="#7aa2f7" stroke-width="1.5" opacity="0.4"/>
+
+    <!-- Row 2 (selected) -->
+    <rect x="25" y="62" width="50" height="14" rx="7" fill="#7aa2f7" opacity="0.9"/>
+    <circle cx="90" cy="69" r="6" fill="#2ac3de"/>
+    <line x1="100" y1="69" x2="140" y2="69" stroke="#7aa2f7" stroke-width="1.5" opacity="0.4"/>
+
+    <!-- Row 3 -->
+    <rect x="25" y="89" width="50" height="14" rx="7" fill="#bb9af7" opacity="0.7"/>
+    <circle cx="90" cy="96" r="5" fill="#2ac3de"/>
+    <line x1="100" y1="96" x2="140" y2="96" stroke="#7aa2f7" stroke-width="1.5" opacity="0.4"/>
+
+    <!-- Row 4 -->
+    <rect x="25" y="116" width="50" height="14" rx="7" fill="#bb9af7" opacity="0.5"/>
+    <circle cx="90" cy="123" r="5" fill="#2ac3de"/>
+    <line x1="100" y1="123" x2="140" y2="123" stroke="#7aa2f7" stroke-width="1.5" opacity="0.4"/>
+
+    <!-- Selection cursor arrow -->
+    <path d="M18 55 L24 69 L18 83" stroke="#9ece6a" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+
+    <!-- Neural connection lines from list to brain -->
+    <path d="M150 42 C170 42, 175 65, 150 80" stroke="#bb9af7" stroke-width="1" opacity="0.4" fill="none"/>
+    <path d="M150 69 C175 69, 180 65, 150 42" stroke="#7aa2f7" stroke-width="1" opacity="0.4" fill="none"/>
+    <path d="M150 96 C175 96, 180 100, 150 123" stroke="#2ac3de" stroke-width="1" opacity="0.4" fill="none"/>
+
+    <!-- Small neural nodes -->
+    <circle cx="45" cy="42" r="2.5" fill="#16161e"/>
+    <circle cx="45" cy="69" r="2.5" fill="#16161e"/>
+    <circle cx="45" cy="96" r="2.5" fill="#16161e"/>
+    <circle cx="45" cy="123" r="2.5" fill="#16161e"/>
+
+    <!-- Checkmark indicator on selected row -->
+    <path d="M88 67 L90 71 L94 65" stroke="#9ece6a" stroke-width="1.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+  </g>
+
+  <!-- Wordmark -->
+  <text x="240" y="125" font-family="'SF Mono', 'Cascadia Code', 'JetBrains Mono', 'Fira Code', monospace" font-size="42" font-weight="bold" letter-spacing="2">
+    <tspan fill="url(#neural)">opencode-model-selector</tspan>
+  </text>
+
+  <!-- Tagline -->
+  <text x="245" y="165" font-family="'Inter', 'Segoe UI', system-ui, sans-serif" font-size="16" fill="#565f89" letter-spacing="3">
+    INTERACTIVE MODEL SELECTOR FOR OPENCODE AGENTS
+  </text>
+
+  <!-- Feature pills -->
+  <g transform="translate(245, 190)">
+    <rect x="0" y="0" width="130" height="26" rx="13" fill="#bb9af7" fill-opacity="0.15" stroke="#bb9af7" stroke-width="1" stroke-opacity="0.3"/>
+    <text x="65" y="17" font-family="monospace" font-size="11" fill="#bb9af7" text-anchor="middle">Model Selection</text>
+
+    <rect x="145" y="0" width="120" height="26" rx="13" fill="#7aa2f7" fill-opacity="0.15" stroke="#7aa2f7" stroke-width="1" stroke-opacity="0.3"/>
+    <text x="205" y="17" font-family="monospace" font-size="11" fill="#7aa2f7" text-anchor="middle">Bubbletea TUI</text>
+
+    <rect x="280" y="0" width="120" height="26" rx="13" fill="#2ac3de" fill-opacity="0.15" stroke="#2ac3de" stroke-width="1" stroke-opacity="0.3"/>
+    <text x="340" y="17" font-family="monospace" font-size="11" fill="#2ac3de" text-anchor="middle">Agent Config</text>
+
+    <rect x="415" y="0" width="155" height="26" rx="13" fill="#9ece6a" fill-opacity="0.15" stroke="#9ece6a" stroke-width="1" stroke-opacity="0.3"/>
+    <text x="492" y="17" font-family="monospace" font-size="11" fill="#9ece6a" text-anchor="middle">Backup &amp; Restore</text>
+  </g>
+
+  <!-- Glow line at bottom -->
+  <rect x="0" y="254" width="800" height="6" rx="0" fill="url(#glow)"/>
+</svg>

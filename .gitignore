@@ -35,3 +35,14 @@ desktop.ini
 # Environment
 .env
 .env.local
+
+# Build output
+bin/
+coverage/
+
+# Ignore dotfiles except specific ones
+.*
+!.github/
+!.gitignore
+!.goreleaser.yaml
+!.husky/

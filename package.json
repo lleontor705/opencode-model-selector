@@ -1,0 +1,12 @@
+{
+  "name": "opencode-model-selector",
+  "version": "1.0.0",
+  "description": "Go CLI tool for interactively selecting OpenCode models and editing agent configuration",
+  "license": "MIT",
+  "devDependencies": {
+    "husky": "^9.1.7"
+  },
+  "scripts": {
+    "prepare": "husky"
+  }
+}
