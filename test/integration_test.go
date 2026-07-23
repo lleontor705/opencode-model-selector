@@ -163,16 +163,12 @@ func onSaveConfirm(m tea.Model) bool {
 }
 
 // isDirty reports whether the dirty indicator ('*') appears in the rendered
-// title line. The dirty marker is prepended to the title when m.dirty == true.
+// status bar. The status bar shows " *" when dirty and "  " when clean.
 func isDirty(m tea.Model) bool {
+	// Look for the dirty marker anywhere in the rendered view.
+	// The status bar shows " *" when dirty and "  " when clean.
 	view := m.View()
-	// The first non-empty line is the title line for every screen.
-	for _, line := range strings.Split(view, "\n") {
-		if strings.TrimSpace(line) != "" {
-			return strings.Contains(line, "*")
-		}
-	}
-	return false
+	return strings.Contains(view, " *")
 }
 
 // pressKey is a convenience wrapper that sends a KeyMsg and returns the
@@ -1207,3 +1203,4 @@ func runBinaryFull(t *testing.T, binary string, args ...string) (string, string,
 	}
 	return stdoutBuf.String(), stderrBuf.String(), exitCode
 }
+
