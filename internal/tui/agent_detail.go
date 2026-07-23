@@ -5,6 +5,25 @@
 // top_p, color, steps, disable) and routes ENTER/SPACE to the appropriate
 // sub-screen or toggle action.
 //
+// Visual layout:
+//
+//	╭─ opencode-model-selector ─────────────────────╮
+//	│  Interactive model selector for OpenCode...   │
+//	╰───────────────────────────────────────────────╯
+//
+//	Agent: code-reviewer (subagent)
+//	Description: Code review subagent
+//
+//	── Editable Fields ──
+//	  ▶ model       anthropic/claude-sonnet-4-20250514
+//	    temperature (none)              (range 0.0–1.0)
+//	    top_p       0.9
+//	    color       #FF5733
+//	    steps       10                  (positive integer)
+//	    disable     ✗ disabled
+//
+//	[ <code-reviewer> ]                                      ? for help
+//
 // Spec coverage:
 //   - REQ-TUI-004: Agent detail rendering (header, fields, cursor, warning)
 //   - REQ-TUI-004: Navigation (j/k, arrows, ENTER, SPACE, ESC)
@@ -22,23 +41,7 @@ import (
 const fieldNone = "(none)"
 
 // viewAgentDetail renders the Agent Detail screen for the agent stored in
-// m.selectedAgent. The layout is:
-//
-//	[dirty] Agent: <name> (<mode>)
-//	Description: <description or omitted>
-//
-//	── Editable Fields ──
-//	  ► model       anthropic/claude-sonnet-4-20250514
-//	    temperature (none)
-//	    ...
-//
-//	[warning if disabled]
-//	j/k: navigate  ENTER: edit  SPACE: toggle  ESC: back
-//
-// When the agent is disabled, a warning is rendered and the fields list is
-// still shown (read-only context).
-//
-// Spec: REQ-TUI-004 — rendering.
+// m.selectedAgent.
 func viewAgentDetail(m Model) string {
 	if m.config == nil {
 		return ErrorStyle.Render("no config loaded")
@@ -50,41 +53,57 @@ func viewAgentDetail(m Model) string {
 	mode := m.config.GetAgentMode(agent)
 	isDisabled := m.config.IsAgentDisabled(agent)
 
-	// --- Header ---
-	header := "Agent: " + agent + " (" + mode + ")"
-	if m.dirty {
-		b.WriteString(DirtyIndicator.Render("*") + " " + TitleStyle.Render(header))
-	} else {
-		b.WriteString(TitleStyle.Render(header))
-	}
+	// --- Header banner ---
+	b.WriteString(renderHeader(m, "Agent: "+agent+" ("+mode+")"))
 	b.WriteString("\n\n")
 
 	// --- Description (only if present) ---
 	if val, ok := m.config.GetAgentField(agent, "description"); ok {
 		if desc, ok := val.(string); ok && desc != "" {
-			b.WriteString("Description: " + desc + "\n\n")
+			b.WriteString(FieldLabel.Render("Description: ") + FieldValue.Render(desc))
+			b.WriteString("\n\n")
 		}
 	}
 
 	// --- Disabled warning ---
 	if isDisabled {
-		b.WriteString(ErrorStyle.Render("WARNING: agent is disabled — fields cannot be edited"))
+		b.WriteString(ErrorStyle.Render("⚠ WARNING: agent is disabled — fields cannot be edited"))
 		b.WriteString("\n\n")
 	}
 
 	// --- Editable Fields ---
-	b.WriteString(SectionHeader.Render("Editable Fields"))
+	b.WriteString(SectionHeader.Render("◆ Editable Fields"))
 	b.WriteByte('\n')
 
 	for i, field := range m.editableFields {
+		value := fieldDisplayValue(m, agent, field)
+		hint := fieldContextHint(field)
+
 		prefix := "  "
 		if i == m.selectedField {
-			prefix = "> "
+			prefix = SelectedPrefix.Render("▶ ") + " "
 		}
 
-		value := fieldDisplayValue(m, agent, field)
+		// Field row: "model: <value>" with optional hint.
+		var valueStr string
+		if field == "disable" {
+			// Render booleans with ✓/✗ icons for at-a-glance recognition.
+			if isDisabled {
+				valueStr = BoolDisabled.Render("✗ disabled")
+			} else {
+				valueStr = BoolEnabled.Render("✓ enabled")
+			}
+		} else {
+			valueStr = FieldValue.Render(value)
+		}
 
-		line := prefix + fmt.Sprintf("%-13s %s", field+":", value)
+		line := prefix +
+			FieldLabel.Render(fmt.Sprintf("%-13s", field+":")) + " " +
+			valueStr
+		if hint != "" && field != "disable" {
+			line += "  " + FieldHint.Render(hint)
+		}
+
 		if i == m.selectedField {
 			line = SelectedStyle.Render(line)
 		}
@@ -93,10 +112,34 @@ func viewAgentDetail(m Model) string {
 	}
 
 	// --- Help footer ---
-	b.WriteByte('\n')
-	b.WriteString(HelpStyle.Render("j/k: navigate  ENTER: edit  SPACE: toggle  ESC: back"))
+	b.WriteString("\n")
+	b.WriteString(helpLine([]helpItem{
+		{"j/k", "navigate"},
+		{"ENTER", "edit"},
+		{"SPACE", "toggle"},
+		{"ESC", "back"},
+	}))
+
+	// --- Status bar ---
+	b.WriteString("\n")
+	b.WriteString(renderStatusBar(m, "Agent: "+agent, 0))
 
 	return b.String()
+}
+
+// fieldContextHint returns a short parenthetical hint shown next to a field
+// to guide the user on valid input. Returns "" when no hint is needed (e.g.
+// for "model" where the picker UI does the guidance).
+func fieldContextHint(field string) string {
+	switch field {
+	case "temperature", "top_p":
+		return "(default: 0.7)"
+	case "color":
+		return "(hex or theme)"
+	case "steps":
+		return "(positive integer)"
+	}
+	return ""
 }
 
 // fieldDisplayValue resolves the display string for a single editable field of

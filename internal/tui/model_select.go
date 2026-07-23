@@ -5,6 +5,23 @@
 // and allows the user to assign a model to the global default or a specific
 // agent.
 //
+// Visual layout:
+//
+//	╭─ opencode-model-selector ─────────────────────╮
+//	│  Interactive model selector for OpenCode...   │
+//	╰───────────────────────────────────────────────╯
+//
+//	🔍 Search: <filter input>
+//
+//	[ opencode-go/ ]
+//	  ▶ glm-5.1   [★ CURRENT]
+//	    glm-5.2
+//
+//	[ openai/ ]
+//	    gpt-5
+//
+//	[ <Select Model> · N models ]                            ? for help
+//
 // Spec coverage:
 //   - REQ-TUI-005: Model selection rendering (grouped display, filter, markers)
 //   - REQ-TUI-005: Filter logic (case-insensitive substring on provider + ID + FullName)
@@ -68,24 +85,7 @@ func applyFilter(m Model) Model {
 	return m
 }
 
-// viewModelSelection renders the model selection screen. The layout is:
-//
-//	[dirty] Select Model
-//	Filter: <value>
-//
-//	── <provider>/ ──
-//	► <id>  ✓  (if current model)
-//	  <id>
-//
-//	── <provider>/ ──
-//	  <id>
-//
-//	Type to filter  ENTER: select  ESC: cancel
-//
-// When the flat models list is empty, "No models available" is shown.
-// When the filter produces no results, "No models match filter" is shown.
-//
-// Spec: REQ-TUI-005 — rendering.
+// viewModelSelection renders the model selection screen.
 func viewModelSelection(m Model) string {
 	if m.config == nil {
 		return ErrorStyle.Render("no config loaded")
@@ -93,24 +93,19 @@ func viewModelSelection(m Model) string {
 
 	var b strings.Builder
 
-	// --- Title bar with dirty indicator ---
-	title := TitleStyle.Render("Select Model")
-	if m.dirty {
-		b.WriteString(DirtyIndicator.Render("*") + " " + title)
-	} else {
-		b.WriteString(title)
-	}
+	// --- Header banner ---
+	b.WriteString(renderHeader(m, "Select Model"))
 	b.WriteString("\n\n")
 
 	// --- Empty models list ---
 	if len(m.flatModels) == 0 {
 		b.WriteString(HelpStyle.Render("No models available"))
 		b.WriteByte('\n')
-		return b.String()
+		return finishModelSelection(m, &b)
 	}
 
-	// --- Filter input ---
-	b.WriteString("Filter: ")
+	// --- Filter input (with explicit Search label) ---
+	b.WriteString(SearchLabel.Render("🔍 Search: "))
 	b.WriteString(m.filterInput.View())
 	b.WriteString("\n\n")
 
@@ -118,38 +113,31 @@ func viewModelSelection(m Model) string {
 	if len(m.filteredModels) == 0 {
 		b.WriteString(HelpStyle.Render("No models match filter"))
 		b.WriteByte('\n')
-		return b.String()
+		return finishModelSelection(m, &b)
 	}
 
-	// --- Determine the current model (for checkmark marker) ---
+	// --- Determine the current model (for CURRENT badge) ---
 	currentModel := currentModelFullName(m)
 
 	// --- Grouped display by provider ---
-	// Build a set of filtered FullNames for O(1) membership checks during
-	// grouped iteration.
 	filteredSet := make(map[string]bool, len(m.filteredModels))
 	for _, model := range m.filteredModels {
 		filteredSet[model.FullName] = true
 	}
 
-	// Sort providers alphabetically for deterministic rendering.
 	providers := make([]string, 0, len(m.groupedModels))
 	for p := range m.groupedModels {
 		providers = append(providers, p)
 	}
 	sort.Strings(providers)
 
-	// flatIdx tracks the position in the flat filteredModels list so we can
-	// apply the cursor highlight to the correct row.
 	flatIdx := 0
 	for _, provider := range providers {
-		// Sort models within each provider by FullName.
 		models := append([]opencode.Model(nil), m.groupedModels[provider]...)
 		sort.Slice(models, func(i, j int) bool {
 			return models[i].FullName < models[j].FullName
 		})
 
-		// Check if any model from this provider is in the filtered set.
 		hasFiltered := false
 		for _, model := range models {
 			if filteredSet[model.FullName] {
@@ -161,8 +149,8 @@ func viewModelSelection(m Model) string {
 			continue
 		}
 
-		// Section header.
-		b.WriteString(SectionHeader.Render(provider + "/"))
+		// Provider badge — pill-style header per provider.
+		b.WriteString(renderProviderBadge(provider))
 		b.WriteByte('\n')
 
 		for _, model := range models {
@@ -180,23 +168,52 @@ func viewModelSelection(m Model) string {
 		b.WriteByte('\n')
 	}
 
-	// --- Help footer ---
-	b.WriteString(HelpStyle.Render("Type to filter  ENTER: select  ESC: cancel"))
+	// --- Help footer (navigation hints) ---
+	b.WriteString(helpLine([]helpItem{
+		{"type", "filter"},
+		{"j/k", "navigate"},
+		{"ENTER", "select"},
+		{"ESC", "cancel"},
+	}))
 
+	// --- Status bar ---
+	return finishModelSelection(m, &b)
+}
+
+// finishModelSelection appends the status bar and returns the buffer's
+// contents. Extracted so the early-return paths (empty list, no matches)
+// share the same footer treatment.
+func finishModelSelection(m Model, b *strings.Builder) string {
+	b.WriteString("\n")
+	b.WriteString(renderStatusBar(m, "Select Model", len(m.filteredModels)))
 	return b.String()
 }
 
+// renderProviderBadge renders a provider name as a colored pill in the model
+// picker. The diamond prefix keeps the visual language consistent with
+// section headers elsewhere in the TUI.
+func renderProviderBadge(provider string) string {
+	return ProviderBadge.Render("◆ " + provider + "/")
+}
+
 // renderModelRow renders a single model row in the selection list. The cursor
-// is indicated by '►' and the current model by '✓'.
+// is indicated by '▶' and the current model by a '★ CURRENT' pill.
 func renderModelRow(model opencode.Model, isSelected, isCurrent bool) string {
 	cursor := "  "
 	if isSelected {
-		cursor = "\u25ba "
+		cursor = SelectedPrefix.Render("▶ ") + " "
 	}
 
 	line := cursor + model.ID
+
 	if isCurrent {
-		line += "  \u2713"
+		// Pad to align the CURRENT pill consistently. Width tuned for
+		// typical model IDs; the pill is colored green to draw attention.
+		const padWidth = 28
+		if len(model.ID) < padWidth {
+			line += strings.Repeat(" ", padWidth-len(model.ID))
+		}
+		line += " " + CurrentBadge.Render("★ current")
 	}
 
 	if isSelected {
@@ -326,3 +343,5 @@ func initModelSelectionScreen(m *Model) {
 		return m.filteredModels[i].FullName < m.filteredModels[j].FullName
 	})
 }
+
+

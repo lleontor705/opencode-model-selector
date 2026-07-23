@@ -163,16 +163,12 @@ func onSaveConfirm(m tea.Model) bool {
 }
 
 // isDirty reports whether the dirty indicator ('*') appears in the rendered
-// title line. The dirty marker is prepended to the title when m.dirty == true.
+// status bar. The status bar shows " *" when dirty and "  " when clean.
 func isDirty(m tea.Model) bool {
+	// Look for the dirty marker anywhere in the rendered view.
+	// The status bar shows " *" when dirty and "  " when clean.
 	view := m.View()
-	// The first non-empty line is the title line for every screen.
-	for _, line := range strings.Split(view, "\n") {
-		if strings.TrimSpace(line) != "" {
-			return strings.Contains(line, "*")
-		}
-	}
-	return false
+	return strings.Contains(view, " *")
 }
 
 // pressKey is a convenience wrapper that sends a KeyMsg and returns the
@@ -1153,17 +1149,17 @@ func projectRoot(t *testing.T) string {
 	return abs
 }
 
-// buildBinary compiles the cmd/main.go entrypoint to a temp executable and
+// buildBinary compiles the root main.go entrypoint to a temp executable and
 // returns its path. The binary is cleaned up automatically via t.TempDir().
 func buildBinary(t *testing.T) string {
 	t.Helper()
 	binaryPath := filepath.Join(t.TempDir(), "opencode-model-selector-test"+binaryExt())
 
-	cmd := exec.Command("go", "build", "-o", binaryPath, "./cmd")
+	cmd := exec.Command("go", "build", "-o", binaryPath, ".")
 	cmd.Dir = projectRoot(t)
 	out, err := cmd.CombinedOutput()
 	require.NoError(t, err,
-		"go build ./cmd failed: %s", string(out))
+		"go build . failed: %s", string(out))
 	require.FileExists(t, binaryPath, "built binary must exist")
 	return binaryPath
 }
@@ -1207,3 +1203,4 @@ func runBinaryFull(t *testing.T, binary string, args ...string) (string, string,
 	}
 	return stdoutBuf.String(), stderrBuf.String(), exitCode
 }
+

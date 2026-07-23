@@ -175,7 +175,7 @@ func TestRun_FlagError_ReturnsExit2(t *testing.T) {
 // loadTestModels loads the fixture models_output.txt for integration-style tests.
 func loadTestModels(t *testing.T) []opencode.Model {
 	t.Helper()
-	abs, err := filepath.Abs(filepath.Join("..", "test", "fixtures", "models_output.txt"))
+	abs, err := filepath.Abs(filepath.Join("test", "fixtures", "models_output.txt"))
 	require.NoError(t, err, "fixture file must exist")
 	data, err := os.ReadFile(abs)
 	require.NoError(t, err, "failed to read fixture")
@@ -185,7 +185,7 @@ func loadTestModels(t *testing.T) []opencode.Model {
 // loadTestConfig loads the fixture opencode.json for integration-style tests.
 func loadTestConfig(t *testing.T) *config.Config {
 	t.Helper()
-	abs, err := filepath.Abs(filepath.Join("..", "test", "fixtures", "opencode.json"))
+	abs, err := filepath.Abs(filepath.Join("test", "fixtures", "opencode.json"))
 	require.NoError(t, err, "failed to resolve fixture path")
 	cfg, err := config.LoadConfig(abs)
 	require.NoError(t, err)
@@ -613,7 +613,7 @@ func captureStdout(t *testing.T, fn func()) string {
 // fixture. Centralizes the path resolution for run() integration tests.
 func resolveFixtureConfigPath(t *testing.T) string {
 	t.Helper()
-	abs, err := filepath.Abs(filepath.Join("..", "test", "fixtures", "opencode.json"))
+	abs, err := filepath.Abs(filepath.Join("test", "fixtures", "opencode.json"))
 	require.NoError(t, err)
 	return abs
 }
