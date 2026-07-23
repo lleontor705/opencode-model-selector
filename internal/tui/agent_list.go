@@ -121,7 +121,7 @@ func viewAgentList(m Model) string {
 		content, _, _ := renderAgentListContent(m)
 		parts := []string{renderHeader(m, "Agents")}
 		if m.saveSuccess {
-			parts = append(parts, SuccessStyle.Render("✓ Saved successfully!"))
+			parts = append(parts, SuccessStyle.Render("✓ Saved successfully"))
 		}
 		parts = append(parts, content)
 		if m.quitConfirm {
@@ -133,7 +133,7 @@ func viewAgentList(m Model) string {
 	syncAgentViewport(&m)
 	parts := []string{renderHeader(m, "Agents")}
 	if m.saveSuccess {
-		parts = append(parts, SuccessStyle.Render("✓ Saved successfully!"))
+		parts = append(parts, SuccessStyle.Render("✓ Saved successfully"))
 	}
 	parts = append(parts, m.agentViewport.View())
 	if m.quitConfirm {
@@ -146,10 +146,9 @@ func viewAgentList(m Model) string {
 
 func agentListHelp() string {
 	return helpLine([]helpItem{
-		{"j/k", "navigate"},
-		{"ENTER", "edit"},
-		{"s", "save"},
-		{"q", "quit"},
+		{"S", "Review & Save"},
+		{"Q", "Quit"},
+		{"Esc", "Quit/confirm"},
 	})
 }
 

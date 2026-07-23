@@ -72,7 +72,7 @@ func TestView_FooterRemainsVisibleAtMinimumSupportedHeight(t *testing.T) {
 
 	out := m.View()
 	assert.LessOrEqual(t, renderedLineCount(out), minTerminalHeight)
-	assert.Contains(t, out, "ENTER")
+	assert.Contains(t, out, "Review & Save")
 	assert.Contains(t, out, agentListScreenLabel)
 }
 

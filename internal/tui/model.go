@@ -12,6 +12,8 @@
 package tui
 
 import (
+	"reflect"
+
 	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
@@ -118,6 +120,7 @@ type Model struct {
 	// cursors remain the source of truth; viewport offsets only control clipping.
 	agentViewport viewport.Model
 	modelViewport viewport.Model
+	saveViewport  viewport.Model
 	// filteredModels is the result of applying filterInput.Value() to
 	// flatModels. Maintained by model_select.go in a later task.
 	filteredModels []opencode.Model
@@ -126,9 +129,8 @@ type Model struct {
 
 	// dirty is true when any in-memory edit has not yet been persisted.
 	dirty bool
-	// changes records every in-memory mutation since the last successful
-	// save. The save-confirm screen renders this slice as a diff so the
-	// user can verify what will be written to disk.
+	// changes records the net in-memory mutations since the last successful
+	// save, coalesced by target and field for review before writing to disk.
 	changes []Change
 	// quitConfirm is true when the "quit anyway?" confirmation overlay is
 	// active on the Agent List screen. It is a sub-state of ScreenAgentList,
@@ -186,6 +188,7 @@ func NewModel(cfg *config.Config, grouped map[string][]opencode.Model, backupCou
 	m.fieldInput = textinput.New()
 	m.agentViewport = viewport.New(0, 0)
 	m.modelViewport = viewport.New(0, 0)
+	m.saveViewport = viewport.New(0, 0)
 
 	// Populate agent lists from the config when present. GetAgents already
 	// filters out system agents (REQ-CFG-008) so we do not repeat that here.
@@ -221,12 +224,52 @@ func (m Model) Init() tea.Cmd {
 	return nil
 }
 
-// RecordChange appends a Change entry to the model and marks it dirty. Call
-// this from every mutation site AFTER the config has been updated so OldVal
-// reflects the previous value and NewVal reflects the new one.
+// RecordChange coalesces mutations by target and field. The first old value is
+// retained while later edits replace the pending new value. Reverting to the
+// original value removes the net change entirely.
 func (m *Model) RecordChange(target, field string, oldVal, newVal interface{}) {
+	for i := range m.changes {
+		change := &m.changes[i]
+		if change.Target != target || change.Field != field {
+			continue
+		}
+		if valuesEqual(change.OldVal, newVal) {
+			m.changes = append(m.changes[:i], m.changes[i+1:]...)
+		} else {
+			change.NewVal = newVal
+		}
+		m.dirty = len(m.changes) > 0
+		return
+	}
+
+	if valuesEqual(oldVal, newVal) {
+		m.dirty = len(m.changes) > 0
+		return
+	}
 	m.changes = append(m.changes, Change{Target: target, Field: field, OldVal: oldVal, NewVal: newVal})
 	m.dirty = true
+}
+
+func valuesEqual(left, right interface{}) bool {
+	if reflect.DeepEqual(left, right) {
+		return true
+	}
+	leftNumber, leftOK := numericValue(left)
+	rightNumber, rightOK := numericValue(right)
+	return leftOK && rightOK && leftNumber == rightNumber
+}
+
+func numericValue(value interface{}) (float64, bool) {
+	switch number := value.(type) {
+	case int:
+		return float64(number), true
+	case int64:
+		return float64(number), true
+	case float64:
+		return number, true
+	default:
+		return 0, false
+	}
 }
 
 // Update is the global key/message dispatcher. Ctrl+C remains global, while
@@ -246,11 +289,19 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.agentViewport.Height = agentListViewportHeight(m)
 		m.modelViewport.Width = max(1, msg.Width)
 		m.modelViewport.Height = modelSelectionViewportHeight(m)
+		m.saveViewport.Width = max(1, msg.Width)
+		m.saveViewport.Height = saveReviewViewportHeight(m)
 		syncAgentViewport(&m)
 		syncModelViewport(&m)
+		syncSaveViewport(&m)
 		return m, nil
 
 	case tea.KeyMsg:
+		// Bubble Tea renders after every Update. A successful save therefore gets
+		// one complete Agent List frame before the next user action clears it.
+		if m.saveSuccess {
+			m.saveSuccess = false
+		}
 		// === GLOBAL KEYS (work on every screen) ===
 
 		// If quit confirmation is active, intercept all keys

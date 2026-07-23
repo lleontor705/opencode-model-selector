@@ -13,10 +13,13 @@ package tui
 import (
 	"os"
 	"path/filepath"
+	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -281,8 +284,8 @@ func TestViewSaveConfirm_ShowsBackupRetention(t *testing.T) {
 func TestViewSaveConfirm_ShowsHelpFooter(t *testing.T) {
 	m := newSaveConfirmModel(t, true)
 	out := viewSaveConfirm(m)
-	assert.Contains(t, out, "ENTER")
-	assert.Contains(t, out, "ESC")
+	assert.Contains(t, out, "Enter/Y Save to disk")
+	assert.Contains(t, out, "Esc/N Back")
 }
 
 func TestViewSaveConfirm_ShowsErrorWhenPresent(t *testing.T) {
@@ -337,7 +340,7 @@ func TestViewSaveConfirm_ShowsChanges(t *testing.T) {
 		"each change MUST render as Target.Field")
 	assert.Contains(t, out, "plan.temperature",
 		"each change MUST render as Target.Field")
-	assert.Contains(t, out, "2 changes",
+	assert.Contains(t, out, "2 net changes",
 		"the header MUST show the total change count")
 	assert.Contains(t, out, "opencode-go/glm-5.2",
 		"the new value MUST appear in the diff line")
@@ -485,4 +488,120 @@ func TestPlural(t *testing.T) {
 	assert.Equal(t, "", plural(1))
 	assert.Equal(t, "s", plural(0))
 	assert.Equal(t, "s", plural(2))
+}
+
+func TestViewSaveConfirm_LongDiffIsScrollableAndFooterVisible(t *testing.T) {
+	m := newSaveConfirmModel(t, true)
+	m.width = 80
+	m.height = 16
+	for i := 0; i < 40; i++ {
+		m.RecordChange("agent", "field-"+strconv.Itoa(i), i, i+1)
+	}
+
+	before := viewSaveConfirm(m)
+	assert.LessOrEqual(t, lipgloss.Height(before), m.height)
+	assert.Contains(t, before, "Review changes")
+	assert.Contains(t, before, "Enter/Y Save to disk · Esc/N Back")
+	assert.NotContains(t, before, "field-39")
+
+	afterPage, _ := updateSaveConfirm(m, tea.KeyMsg{Type: tea.KeyPgDown})
+	after := viewSaveConfirm(afterPage)
+	assert.NotEqual(t, before, after)
+	assert.Contains(t, after, "Enter/Y Save to disk · Esc/N Back")
+}
+
+func TestSaveConfirm_EscReturnsImmutableOrigin(t *testing.T) {
+	m := newSaveConfirmModel(t, true)
+	m.navigationStack = []appState{ScreenAgentList, ScreenAgentDetail}
+
+	for _, key := range []rune{'s', 's', 'q'} {
+		updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{key}})
+		m = updated.(Model)
+	}
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	m = updated.(Model)
+
+	assert.Equal(t, ScreenAgentDetail, m.state)
+	assert.Equal(t, []appState{ScreenAgentList}, m.navigationStack)
+}
+
+func TestSaveConfirm_UnrelatedKeysDoNotMutateState(t *testing.T) {
+	m := newSaveConfirmModel(t, true)
+	m.changes = []Change{{Target: "plan", Field: "temperature", OldVal: 0.4, NewVal: 0.7}}
+	originalStack := append([]appState(nil), m.navigationStack...)
+	originalChanges := append([]Change(nil), m.changes...)
+
+	for _, key := range []rune{'s', 'q', 'x'} {
+		updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{key}})
+		m = updated.(Model)
+	}
+
+	assert.Equal(t, ScreenSaveConfirm, m.state)
+	assert.Equal(t, originalStack, m.navigationStack)
+	assert.True(t, reflect.DeepEqual(originalChanges, m.changes))
+	assert.True(t, m.dirty)
+}
+
+func TestSaveSuccess_ClearsOnNextUserAction(t *testing.T) {
+	m := writableSaveConfirmModel(t, 0)
+	m.RecordChange("code-reviewer", "temperature", nil, 0.7)
+	m, _ = performSave(m)
+
+	assert.Contains(t, viewAgentList(m), "✓ Saved successfully")
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyDown})
+	m = updated.(Model)
+	assert.False(t, m.saveSuccess)
+	assert.NotContains(t, viewAgentList(m), "✓ Saved successfully")
+}
+
+func TestSaveReview_CoalescesRepeatedEditsToNetChange(t *testing.T) {
+	m := NewModel(fixtureConfig(t), sampleGrouped(), 5)
+	m.RecordChange("plan", "temperature", 0.4, 0.5)
+	m.RecordChange("plan", "temperature", 0.5, 0.7)
+
+	require.Len(t, m.changes, 1)
+	assert.Equal(t, 0.4, m.changes[0].OldVal)
+	assert.Equal(t, 0.7, m.changes[0].NewVal)
+	assert.True(t, m.dirty)
+}
+
+func TestSaveReview_RemovesNoOpRevertedChange(t *testing.T) {
+	m := NewModel(fixtureConfig(t), sampleGrouped(), 5)
+	m.RecordChange("plan", "temperature", 0.4, 0.7)
+	m.RecordChange("plan", "temperature", 0.7, 0.4)
+
+	assert.Empty(t, m.changes)
+	assert.False(t, m.dirty)
+}
+
+func TestSaveConfirm_ShowsBackupPathAndRetentionClearly(t *testing.T) {
+	m := newSaveConfirmModel(t, true)
+	out := viewSaveConfirm(m)
+
+	assert.Contains(t, out, filepath.Join(filepath.Dir(m.config.Path()), "opencode.json.backup.YYYYMMDD-HHMMSS"))
+	assert.Contains(t, out, "Retention: keep 5 backups")
+	assert.Contains(t, out, "Save changes to opencode.json?")
+}
+
+func TestSaveConfirm_SuccessPreservesBackupBeforeWriteOrdering(t *testing.T) {
+	cfg := writableConfig(t)
+	original, ok := cfg.GetAgentField("plan", "temperature")
+	require.True(t, ok)
+	require.NoError(t, cfg.SetAgentField("plan", "temperature", 0.7))
+	m := NewModel(cfg, sampleGrouped(), 5)
+	m.state = ScreenSaveConfirm
+	m.navigationStack = []appState{ScreenAgentList}
+	m.RecordChange("plan", "temperature", original, 0.7)
+
+	m, _ = performSave(m)
+	require.True(t, m.saveSuccess)
+	matches, err := filepath.Glob(filepath.Join(filepath.Dir(cfg.Path()), "opencode.json.backup.*"))
+	require.NoError(t, err)
+	require.NotEmpty(t, matches)
+	backupBytes, err := os.ReadFile(matches[0])
+	require.NoError(t, err)
+	assert.Contains(t, string(backupBytes), `"temperature": 0.4`)
+	savedBytes, err := os.ReadFile(cfg.Path())
+	require.NoError(t, err)
+	assert.Contains(t, string(savedBytes), `"temperature": 0.7`)
 }

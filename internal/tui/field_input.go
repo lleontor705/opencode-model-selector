@@ -169,7 +169,7 @@ func viewFieldInput(m Model) string {
 
 	// --- Help footer ---
 	b.WriteByte('\n')
-	b.WriteString(HelpStyle.Render("ENTER: save  ESC: cancel"))
+	b.WriteString(HelpStyle.Render("Enter Apply · Esc Discard"))
 
 	return b.String()
 }

@@ -114,10 +114,10 @@ func viewAgentDetail(m Model) string {
 	// --- Help footer ---
 	b.WriteString("\n")
 	b.WriteString(helpLine([]helpItem{
-		{"j/k", "navigate"},
-		{"ENTER", "edit"},
-		{"SPACE", "toggle"},
-		{"ESC", "back"},
+		{"Enter", "Edit"},
+		{"Space", "Toggle disable"},
+		{"S", "Review & Save"},
+		{"Esc", "Back"},
 	}))
 
 	// --- Status bar ---

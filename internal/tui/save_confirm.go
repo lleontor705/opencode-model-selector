@@ -21,10 +21,12 @@ package tui
 
 import (
 	"fmt"
+	"path/filepath"
 	"strconv"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 
 	"github.com/lleontor705/opencode-model-selector/internal/config"
 )
@@ -52,44 +54,74 @@ func viewSaveConfirm(m Model) string {
 		return ErrorStyle.Render("no config loaded")
 	}
 
-	var b strings.Builder
-
-	// --- Title ---
-	b.WriteString(TitleStyle.Render("Save Changes?"))
-	b.WriteString("\n\n")
-
-	// --- Error message (shown if a previous save attempt failed) ---
-	if m.saveError != "" {
-		b.WriteString(ErrorStyle.Render(m.saveError))
-		b.WriteString("\n\n")
-	}
-
-	// --- Summary ---
-	b.WriteString("You have unsaved changes. Save to config?")
-	b.WriteString("\n\n")
-
-	b.WriteString("Config: " + m.config.Path())
-	b.WriteByte('\n')
-	b.WriteString("Backups: " + strconv.Itoa(m.backupCount) + " (retention)")
-	b.WriteString("\n\n")
-
-	// --- Diff preview ---
-	if len(m.changes) > 0 {
-		b.WriteString(DiffSummary.Render(fmt.Sprintf("Saving %d change%s:", len(m.changes), plural(len(m.changes)))))
-		b.WriteString("\n")
-		for _, ch := range m.changes {
-			fmt.Fprintf(&b, "  %s.%s: %s -> %s\n",
-				ch.Target, ch.Field,
-				formatValue(ch.OldVal),
-				formatValue(ch.NewVal))
+	header := saveReviewHeader(m)
+	footer := HelpStyle.Render("Enter/Y Save to disk · Esc/N Back")
+	if m.width <= 0 || m.height <= 0 {
+		content := saveReviewContent(m)
+		if content == "" {
+			return strings.Join([]string{header, footer}, "\n")
 		}
-		b.WriteString("\n")
+		return strings.Join([]string{header, content, footer}, "\n")
 	}
 
-	// --- Help footer ---
-	b.WriteString(HelpStyle.Render("ENTER: save  ESC: cancel"))
+	syncSaveViewport(&m)
+	return strings.Join([]string{
+		clipLines(header, m.width),
+		m.saveViewport.View(),
+		clipLines(footer, m.width),
+	}, "\n")
+}
 
-	return b.String()
+func saveReviewHeader(m Model) string {
+	parts := []string{
+		TitleStyle.Render("Review changes"),
+		"Save changes to opencode.json?",
+		"Config: " + m.config.Path(),
+	}
+	if m.backupCount > 0 {
+		backupPath := filepath.Join(filepath.Dir(m.config.Path()), "opencode.json.backup.YYYYMMDD-HHMMSS")
+		parts = append(parts,
+			"Backup: "+backupPath,
+			"Retention: keep "+strconv.Itoa(m.backupCount)+" backups",
+		)
+	} else {
+		parts = append(parts, "Backup: disabled (retention count is 0)")
+	}
+	if m.saveError != "" {
+		parts = append(parts, ErrorStyle.Render(m.saveError))
+	}
+	return strings.Join(parts, "\n")
+}
+
+func saveReviewContent(m Model) string {
+	if len(m.changes) == 0 {
+		return HelpStyle.Render("No net changes to review")
+	}
+	var b strings.Builder
+	b.WriteString(DiffSummary.Render(fmt.Sprintf("%d net change%s:", len(m.changes), plural(len(m.changes)))))
+	b.WriteByte('\n')
+	for _, ch := range m.changes {
+		fmt.Fprintf(&b, "  %s.%s: %s -> %s\n",
+			ch.Target, ch.Field, formatValue(ch.OldVal), formatValue(ch.NewVal))
+	}
+	return strings.TrimSuffix(b.String(), "\n")
+}
+
+func saveReviewViewportHeight(m Model) int {
+	if m.height <= 0 || m.config == nil {
+		return 0
+	}
+	fixed := lipgloss.Height(saveReviewHeader(m)) + lipgloss.Height(HelpStyle.Render("Enter/Y Save to disk · Esc/N Back"))
+	return max(1, m.height-fixed-2)
+}
+
+func syncSaveViewport(m *Model) {
+	if m.width <= 0 || m.height <= 0 || m.config == nil {
+		return
+	}
+	m.saveViewport.Width = max(1, m.width)
+	m.saveViewport.Height = saveReviewViewportHeight(*m)
+	m.saveViewport.SetContent(clipLines(saveReviewContent(*m), m.width))
 }
 
 // formatValue renders a config value (interface{}) as a human-readable string
@@ -130,14 +162,24 @@ func updateSaveConfirm(m Model, msg tea.Msg) (Model, tea.Cmd) {
 	switch {
 	// --- ENTER or 'y': confirm save ---
 	case keyMsg.Type == tea.KeyEnter ||
-		(keyMsg.Type == tea.KeyRunes && len(keyMsg.Runes) == 1 && keyMsg.Runes[0] == 'y'):
+		(keyMsg.Type == tea.KeyRunes && len(keyMsg.Runes) == 1 &&
+			(keyMsg.Runes[0] == 'y' || keyMsg.Runes[0] == 'Y')):
 		return performSave(m)
 
 	// --- ESC or 'n': cancel ---
 	case keyMsg.Type == tea.KeyEsc || keyMsg.Type == tea.KeyEscape ||
-		(keyMsg.Type == tea.KeyRunes && len(keyMsg.Runes) == 1 && keyMsg.Runes[0] == 'n'):
+		(keyMsg.Type == tea.KeyRunes && len(keyMsg.Runes) == 1 &&
+			(keyMsg.Runes[0] == 'n' || keyMsg.Runes[0] == 'N')):
 		m.popScreen()
 		return m, nil
+
+	// --- Scroll the diff while keeping modal actions fixed ---
+	case keyMsg.Type == tea.KeyUp || keyMsg.Type == tea.KeyDown ||
+		keyMsg.Type == tea.KeyPgUp || keyMsg.Type == tea.KeyPgDown:
+		syncSaveViewport(&m)
+		var cmd tea.Cmd
+		m.saveViewport, cmd = m.saveViewport.Update(keyMsg)
+		return m, cmd
 
 	// --- Unmapped key: no-op ---
 	default:
@@ -167,7 +209,7 @@ func performSave(m Model) (Model, tea.Cmd) {
 	// --- Create backup (if retention > 0) ---
 	if m.backupCount > 0 {
 		if _, err := config.CreateBackup(m.config.Path()); err != nil {
-			m.saveError = "Backup failed: " + err.Error()
+			m.saveError = "Backup failed; verify the config directory is writable, then retry: " + err.Error()
 			// Stay on screen, keep dirty so the user can retry.
 			return m, nil
 		}
@@ -175,7 +217,7 @@ func performSave(m Model) (Model, tea.Cmd) {
 
 	// --- Save config atomically ---
 	if err := m.config.Save(); err != nil {
-		m.saveError = "Save failed: " + err.Error()
+		m.saveError = "Save failed; verify disk space and file permissions, then retry: " + err.Error()
 		// Stay on screen, keep dirty.
 		return m, nil
 	}

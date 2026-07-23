@@ -15,6 +15,7 @@
 package tui
 
 import (
+	"strings"
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -383,8 +384,16 @@ func TestViewFieldInput_ShowsCurrentValueSet(t *testing.T) {
 func TestViewFieldInput_ShowsHelpFooter(t *testing.T) {
 	m := newFieldInputModel(t, "code-reviewer", "temperature")
 	out := viewFieldInput(m)
-	assert.Contains(t, out, "ENTER")
-	assert.Contains(t, out, "ESC")
+	assert.Contains(t, out, "Enter Apply")
+	assert.Contains(t, out, "Esc Discard")
+}
+
+func TestFieldInput_HelpSaysApplyNotSave(t *testing.T) {
+	m := newFieldInputModel(t, "code-reviewer", "temperature")
+	out := viewFieldInput(m)
+
+	assert.Contains(t, out, "Enter Apply · Esc Discard")
+	assert.NotContains(t, strings.ToLower(out), "enter: save")
 }
 
 func TestViewFieldInput_ShowsRangeHint(t *testing.T) {

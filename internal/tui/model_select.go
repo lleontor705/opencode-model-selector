@@ -104,10 +104,8 @@ func viewModelSelection(m Model) string {
 
 func modelSelectionHelp() string {
 	return helpLine([]helpItem{
-		{"type", "filter"},
-		{"↑/↓", "navigate"},
-		{"ENTER", "select"},
-		{"ESC", "cancel"},
+		{"Enter", "Apply model"},
+		{"Esc", "Cancel"},
 	})
 }
 

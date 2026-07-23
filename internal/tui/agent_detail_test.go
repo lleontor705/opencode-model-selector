@@ -153,10 +153,20 @@ func TestViewAgentDetail_ReturnsNonEmpty(t *testing.T) {
 func TestViewAgentDetail_HelpFooterPresent(t *testing.T) {
 	m := newDetailModel(t, "code-reviewer")
 	out := viewAgentDetail(m)
-	assert.Contains(t, out, "ENTER",
-		"help footer MUST mention ENTER for editing")
-	assert.Contains(t, out, "ESC",
-		"help footer MUST mention ESC for going back")
+	assert.Contains(t, out, "Enter Edit",
+		"help footer MUST explain that Enter edits")
+	assert.Contains(t, out, "Esc Back",
+		"help footer MUST explain that Esc goes back")
+}
+
+func TestAgentDetail_HelpExplainsReviewAndSave(t *testing.T) {
+	m := newDetailModel(t, "code-reviewer")
+	out := viewAgentDetail(m)
+
+	assert.Contains(t, out, "Enter Edit")
+	assert.Contains(t, out, "Space Toggle disable")
+	assert.Contains(t, out, "S Review & Save")
+	assert.Contains(t, out, "Esc Back")
 }
 
 // ---------------------------------------------------------------------------
