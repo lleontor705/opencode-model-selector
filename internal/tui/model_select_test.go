@@ -350,10 +350,8 @@ func TestViewModelSelection_ReturnsNonEmpty(t *testing.T) {
 func TestViewModelSelection_HelpFooter(t *testing.T) {
 	m := newModelSelectModel(t, "global", "")
 	out := viewModelSelection(m)
-	assert.Contains(t, out, "Enter Apply model",
+	assert.Contains(t, out, "Enter Apply model · Esc Cancel",
 		"help footer MUST explain that Enter applies the model")
-	assert.Contains(t, out, "Esc Cancel",
-		"help footer MUST explain that Esc cancels")
 }
 
 // ---------------------------------------------------------------------------

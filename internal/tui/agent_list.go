@@ -145,11 +145,7 @@ func viewAgentList(m Model) string {
 }
 
 func agentListHelp() string {
-	return helpLine([]helpItem{
-		{"S", "Review & Save"},
-		{"Q", "Quit"},
-		{"Esc", "Quit/confirm"},
-	})
+	return HelpStyle.Render("S Review & Save · Q Quit · Esc Quit/confirm")
 }
 
 func agentListViewportHeight(m Model) int {

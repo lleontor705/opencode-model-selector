@@ -176,48 +176,6 @@ func joinWithDot(parts []string) []string {
 	return out
 }
 
-// helpItem is one entry in a keybinding help line: a key name (shown in bold
-// primary color) and a short description (shown in muted color).
-type helpItem struct {
-	key  string
-	desc string
-}
-
-// helpLine renders a single-line keybinding hint like:
-//   [j/k] navigate  [ENTER] edit  [s] save  [q] quit
-//
-// The keys are colored with HelpKey and descriptions with HelpStyle; an
-// em-space-equivalent gap separates each pair so the line is easy to scan.
-func helpLine(items []helpItem) string {
-	if len(items) == 0 {
-		return ""
-	}
-	parts := make([]string, 0, len(items))
-	for _, it := range items {
-		parts = append(parts,
-			HelpKey.Render(it.key)+
-				" "+
-				HelpStyle.Render(it.desc),
-		)
-	}
-	// Use a single space as the inter-pair separator; the gap is enough to
-	// visually separate key+desc pairs without crowding.
-	return HelpStyle.Render("  ") + joinHelp(parts, HelpStyle.Render("  "))
-}
-
-// joinHelp joins string parts with a single separator (kept separate from
-// joinWithDot to avoid coupling the dot separator with keybinding lines).
-func joinHelp(parts []string, sep string) string {
-	out := ""
-	for i, p := range parts {
-		if i > 0 {
-			out += sep
-		}
-		out += p
-	}
-	return out
-}
-
 // plural returns "s" when n != 1, "" otherwise. Tiny helper to keep the
 // status bar grammatically correct without importing a full pluralize lib.
 func plural(n int) string {

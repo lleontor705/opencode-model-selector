@@ -163,10 +163,7 @@ func TestAgentDetail_HelpExplainsReviewAndSave(t *testing.T) {
 	m := newDetailModel(t, "code-reviewer")
 	out := viewAgentDetail(m)
 
-	assert.Contains(t, out, "Enter Edit")
-	assert.Contains(t, out, "Space Toggle disable")
-	assert.Contains(t, out, "S Review & Save")
-	assert.Contains(t, out, "Esc Back")
+	assert.Contains(t, out, "Enter Edit · Space Toggle disable · S Review & Save · Esc Back")
 }
 
 // ---------------------------------------------------------------------------

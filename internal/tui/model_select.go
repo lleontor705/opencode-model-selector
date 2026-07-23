@@ -103,10 +103,7 @@ func viewModelSelection(m Model) string {
 }
 
 func modelSelectionHelp() string {
-	return helpLine([]helpItem{
-		{"Enter", "Apply model"},
-		{"Esc", "Cancel"},
-	})
+	return HelpStyle.Render("Enter Apply model · Esc Cancel")
 }
 
 func modelSelectionViewportHeight(m Model) int {
