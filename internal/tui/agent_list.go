@@ -14,23 +14,16 @@
 //	  model: <value or (none)>
 //
 //	── Primary Agents ──
-//	  ▶ agent-name  [DISABLED]
-//	    model:       <value or (none)>
-//	    temperature: <value or (none)>
-//	    top_p:       <value or (none)>
-//	    color:       <value or (none)>
-//	    steps:       <value or (none)>
-//	    disable:     <value or (none)>
+//	  ▶ agent-name [DISABLED] · model <value or (none)>
+//	    temp .4 · top_p .9 · color #FF5733 · steps 10
 //
 //	── Subagents ──
 //	  ▶ agent-name  [H]
-//	    ...same six fields...
+//	    ...same compact configured-value summary...
 //
 //	[ <Agents> · 11 agents · ● unsaved ]                  ? for help
 //
-// All six configurable fields (model, temperature, top_p, color, steps,
-// disable) are shown per agent so users can audit their full config without
-// drilling into each agent. (REQ-TUI-002)
+// Rows stay compact; Agent Detail remains the complete six-field editor.
 //
 // Spec coverage:
 //   - REQ-TUI-002: Agent list rendering (sections, model display, indicators)
@@ -40,9 +33,11 @@ package tui
 import (
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 )
 
 // globalItemKey is the sentinel value in the selectable items list that
@@ -100,17 +95,12 @@ func selectableItems(m Model) []string {
 //	  model: <value or (none)>
 //
 //	── Primary Agents ──
-//	  ▶ agent-name  [DISABLED]
-//	    model:       <value or (none)>
-//	    temperature: <value or (none)>
-//	    top_p:       <value or (none)>
-//	    color:       <value or (none)>
-//	    steps:       <value or (none)>
-//	    disable:     <value or (none)>
+//	  ▶ agent-name [DISABLED] · model <value or (none)>
+//	    temp .4 · top_p .9 · color #FF5733 · steps 10
 //
 //	── Subagents ──
 //	  ▶ agent-name  [H]
-//	    ...same six fields...
+//	    ...same compact configured-value summary...
 //
 //	[ <Agents> · 11 agents · ● unsaved ]                  ? for help
 //
@@ -119,52 +109,107 @@ func selectableItems(m Model) []string {
 // System agents are already filtered out by GetAgents (never in primaryAgents
 // or subagents).
 //
-// All six fields per agent are shown so users can verify their full config
-// from the list without drilling into each agent. (REQ-TUI-002)
+// Only configured optional values appear in the list. The Agent Detail screen
+// retains all six editable fields. (REQ-TUI-002)
 //
 // Spec: REQ-TUI-002.
 func viewAgentList(m Model) string {
 	if m.config == nil {
 		return ErrorStyle.Render("no config loaded")
 	}
-
-	var b strings.Builder
-
-	// --- Header banner ---
-	b.WriteString(renderHeader(m, "Agents"))
-
-	// --- Success banner (if just saved) ---
-	if m.saveSuccess {
-		b.WriteString("\n")
-		b.WriteString(SuccessStyle.Render("✓ Saved successfully!"))
-		b.WriteString("\n")
+	if m.width <= 0 || m.height <= 0 {
+		content, _, _ := renderAgentListContent(m)
+		parts := []string{renderHeader(m, "Agents")}
+		if m.saveSuccess {
+			parts = append(parts, SuccessStyle.Render("✓ Saved successfully!"))
+		}
+		parts = append(parts, content)
+		if m.quitConfirm {
+			parts = append(parts, ErrorStyle.Render("⚠ You have unsaved changes. Quit anyway? (y/n)"))
+		}
+		return strings.Join(append(parts, agentListHelp(), renderStatusBar(m, agentListScreenLabel, len(m.primaryAgents)+len(m.subagents))), "\n")
 	}
 
-	b.WriteString("\n")
+	syncAgentViewport(&m)
+	parts := []string{renderHeader(m, "Agents")}
+	if m.saveSuccess {
+		parts = append(parts, SuccessStyle.Render("✓ Saved successfully!"))
+	}
+	parts = append(parts, m.agentViewport.View())
+	if m.quitConfirm {
+		parts = append(parts, clipLines(ErrorStyle.Render("⚠ You have unsaved changes. Quit anyway? (y/n)"), m.width))
+	}
+	parts = append(parts, clipLines(agentListHelp(), m.width))
+	parts = append(parts, renderStatusBar(m, agentListScreenLabel, len(m.primaryAgents)+len(m.subagents)))
+	return strings.Join(parts, "\n")
+}
 
-	// Build a disabled set for O(1) lookups during rendering.
+func agentListHelp() string {
+	return helpLine([]helpItem{
+		{"j/k", "navigate"},
+		{"ENTER", "edit"},
+		{"s", "save"},
+		{"q", "quit"},
+	})
+}
+
+func agentListViewportHeight(m Model) int {
+	if m.height <= 0 {
+		return 0
+	}
+	fixed := lipgloss.Height(renderHeader(m, "Agents")) + lipgloss.Height(agentListHelp()) +
+		lipgloss.Height(renderStatusBar(m, agentListScreenLabel, len(m.primaryAgents)+len(m.subagents)))
+	components := 4 // header, viewport, help, status
+	if m.saveSuccess {
+		fixed++
+		components++
+	}
+	if m.quitConfirm {
+		fixed++
+		components++
+	}
+	return max(1, m.height-fixed-(components-1))
+}
+
+func syncAgentViewport(m *Model) {
+	if m.width <= 0 || m.height <= 0 {
+		return
+	}
+	m.agentViewport.Width = max(1, m.width)
+	m.agentViewport.Height = agentListViewportHeight(*m)
+	content, selectedStart, selectedEnd := renderAgentListContent(*m)
+	m.agentViewport.SetContent(content)
+	ensureViewportRange(&m.agentViewport, selectedStart, selectedEnd)
+}
+
+func renderAgentListContent(m Model) (string, int, int) {
+	var blocks []string
+	selectedStart, selectedEnd := 0, 0
+	line := 0
+	appendBlock := func(block string, selected bool) {
+		block = clipLines(block, m.width)
+		height := lipgloss.Height(block)
+		if selected {
+			selectedStart = line
+			selectedEnd = line + height - 1
+		}
+		blocks = append(blocks, block)
+		line += height
+	}
+
 	disabled := make(map[string]bool, len(m.disabledAgents))
 	for _, d := range m.disabledAgents {
 		disabled[d] = true
 	}
-
-	// selectableIdx tracks the current position in the selectable list so we
-	// can apply the selection highlight to the correct visual row.
 	selectableIdx := 0
-
-	// --- Global Default Model entry ---
 	globalModelVal := "(none)"
 	if val, ok := m.config.GetGlobalModel(); ok && val != "" {
 		globalModelVal = val
 	}
 	isGlobalSelected := selectableIdx == m.agentCursor
-	b.WriteString(renderGlobalRow(globalModelVal, isGlobalSelected))
-	b.WriteByte('\n')
+	appendBlock(renderGlobalRow(globalModelVal, isGlobalSelected), isGlobalSelected)
 	selectableIdx++
-
-	// --- Primary Agents section ---
-	b.WriteString(SectionHeader.Render("◆ Primary Agents"))
-	b.WriteByte('\n')
+	appendBlock(SectionHeader.Render("◆ Primary Agents"), false)
 	for _, name := range sortedCopy(m.primaryAgents) {
 		isDisabled := disabled[name]
 		isSelected := false
@@ -174,13 +219,9 @@ func viewAgentList(m Model) string {
 			}
 			selectableIdx++
 		}
-		b.WriteString(renderAgentRow(m, name, isDisabled, isSelected))
-		b.WriteByte('\n')
+		appendBlock(renderAgentRow(m, name, isDisabled, isSelected), isSelected)
 	}
-
-	// --- Subagents section ---
-	b.WriteString(SectionHeader.Render("◆ Subagents"))
-	b.WriteByte('\n')
+	appendBlock(SectionHeader.Render("◆ Subagents"), false)
 	for _, name := range sortedCopy(m.subagents) {
 		isDisabled := disabled[name]
 		isSelected := false
@@ -190,33 +231,9 @@ func viewAgentList(m Model) string {
 			}
 			selectableIdx++
 		}
-		b.WriteString(renderAgentRow(m, name, isDisabled, isSelected))
-		b.WriteByte('\n')
+		appendBlock(renderAgentRow(m, name, isDisabled, isSelected), isSelected)
 	}
-
-	// --- Quit confirmation overlay (rendered above the status bar so it is
-	// always visible to the user, but BELOW the section content so the user
-	// still sees what they would lose). ---
-	if m.quitConfirm {
-		b.WriteByte('\n')
-		b.WriteString(ErrorStyle.Render("⚠ You have unsaved changes. Quit anyway? (y/n)"))
-		b.WriteByte('\n')
-	}
-
-	// --- Help footer (keybinding hints) ---
-	b.WriteByte('\n')
-	b.WriteString(helpLine([]helpItem{
-		{"j/k", "navigate"},
-		{"ENTER", "edit"},
-		{"s", "save"},
-		{"q", "quit"},
-	}))
-
-	// --- Status bar (persistent footer) ---
-	b.WriteString("\n")
-	b.WriteString(renderStatusBar(m, agentListScreenLabel, len(m.primaryAgents)+len(m.subagents)))
-
-	return b.String()
+	return strings.Join(blocks, "\n"), selectedStart, selectedEnd
 }
 
 // renderGlobalRow renders the Global Default Model entry row.
@@ -233,16 +250,14 @@ func renderGlobalRow(modelVal string, isSelected bool) string {
 	return AgentNormal.Render(content)
 }
 
-// agentListFields is the ordered set of fields every agent row exposes in the
-// agent list view. Order is fixed: model first (most important), then
-// tuning knobs, then visual (color), behavior (steps), and the disable flag.
-var agentListFields = []string{
-	"model",
+// agentListOptionalFields is the ordered set of configured values shown on the
+// compact second line. Model stays on line one and disable is represented by a
+// badge, so neither appears here.
+var agentListOptionalFields = []string{
 	"temperature",
 	"top_p",
 	"color",
 	"steps",
-	"disable",
 }
 
 // compactFieldValue resolves a single field for an agent and renders it as a
@@ -262,22 +277,16 @@ func compactFieldValue(m Model, name, field string) string {
 	return s
 }
 
-// renderAgentRow renders a single agent row — the agent name plus all six
-// configurable fields (model, temperature, top_p, color, steps, disable) —
-// one per line, aligned for readability. The style depends on whether the
-// agent is disabled, hidden, or currently selected.
+// renderAgentRow renders a compact two-line agent summary. The first line has
+// identity, badges, and model. The second includes configured optional values
+// only. Agent Detail remains the complete six-field editor.
 //
 // Layout:
 //
-//	  [cursor] name  [H] | [DISABLED]
-//	    model:       <value or (none)>
-//	    temperature: <value or (none)>
-//	    top_p:       <value or (none)>
-//	    color:       <value or (none)>
-//	    steps:       <value or (none)>
-//	    disable:     <value or (none)>
+//	[cursor] name [H] | [DISABLED] · model <value or (none)>
+//	  temp .4 · top_p .9 · color #FF5733 · steps 10
 //
-// Spec: REQ-TUI-002 — agent list rendering shows full per-agent config.
+// Spec: REQ-TUI-002 — agent list rendering summarizes configured values.
 func renderAgentRow(m Model, name string, isDisabled, isSelected bool) string {
 	prefix := "  "
 	if isSelected {
@@ -294,19 +303,21 @@ func renderAgentRow(m Model, name string, isDisabled, isSelected bool) string {
 	if isDisabled {
 		nameLine += " " + ErrorStyle.Render("[DISABLED]")
 	}
+	nameLine += " · model " + FieldValue.Render(compactFieldValue(m, name, "model"))
 
-	var b strings.Builder
-	b.WriteString(nameLine)
-	b.WriteByte('\n')
-
-	// Render all six fields, label-padded for visual alignment. Field labels
-	// are plain; only the value is themed with FieldValue.
-	for _, field := range agentListFields {
-		val := compactFieldValue(m, name, field)
-		fmt.Fprintf(&b, "    %-13s %s\n", field+":", FieldValue.Render(val))
+	values := make([]string, 0, len(agentListOptionalFields))
+	for _, field := range agentListOptionalFields {
+		val, ok := configuredFieldValue(m, name, field)
+		if !ok {
+			continue
+		}
+		label := field
+		if field == "temperature" {
+			label = "temp"
+		}
+		values = append(values, label+" "+val)
 	}
-
-	content := b.String()
+	content := nameLine + "\n    " + strings.Join(values, " · ")
 	switch {
 	case isDisabled:
 		return AgentDisabled.Render(content)
@@ -316,6 +327,26 @@ func renderAgentRow(m Model, name string, isDisabled, isSelected bool) string {
 		return AgentHidden.Render(content)
 	default:
 		return AgentNormal.Render(content)
+	}
+}
+
+func configuredFieldValue(m Model, name, field string) (string, bool) {
+	val, ok := m.config.GetAgentField(name, field)
+	if !ok || val == nil {
+		return "", false
+	}
+	switch value := val.(type) {
+	case float64:
+		s := strconv.FormatFloat(value, 'f', -1, 64)
+		if strings.HasPrefix(s, "0.") {
+			s = strings.TrimPrefix(s, "0")
+		} else if strings.HasPrefix(s, "-0.") {
+			s = "-" + strings.TrimPrefix(s, "-0")
+		}
+		return s, true
+	default:
+		s := fmt.Sprintf("%v", value)
+		return s, s != ""
 	}
 }
 
@@ -394,6 +425,7 @@ func updateAgentList(m Model, msg tea.KeyMsg) (Model, tea.Cmd) {
 		if len(items) > 0 && m.agentCursor < len(items)-1 {
 			m.agentCursor++
 		}
+		syncAgentViewport(&m)
 		return m, nil
 
 	// --- Cursor up ---
@@ -402,6 +434,7 @@ func updateAgentList(m Model, msg tea.KeyMsg) (Model, tea.Cmd) {
 		if m.agentCursor > 0 {
 			m.agentCursor--
 		}
+		syncAgentViewport(&m)
 		return m, nil
 
 	// --- ENTER: transition ---

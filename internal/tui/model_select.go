@@ -34,6 +34,7 @@ import (
 
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 
 	"github.com/lleontor705/opencode-model-selector/internal/config"
 	"github.com/lleontor705/opencode-model-selector/internal/opencode"
@@ -90,36 +91,56 @@ func viewModelSelection(m Model) string {
 	if m.config == nil {
 		return ErrorStyle.Render("no config loaded")
 	}
+	search := clipLines(SearchLabel.Render("🔍 Search: ")+m.filterInput.View(), m.width)
+	help := modelSelectionHelp()
+	status := renderStatusBar(m, "Select Model", len(m.filteredModels))
+	if m.width <= 0 || m.height <= 0 {
+		content, _, _ := renderModelSelectionContent(m)
+		return strings.Join([]string{renderHeader(m, "Select Model"), search, content, help, status}, "\n")
+	}
+	syncModelViewport(&m)
+	return strings.Join([]string{renderHeader(m, "Select Model"), search, m.modelViewport.View(), clipLines(help, m.width), status}, "\n")
+}
 
-	var b strings.Builder
+func modelSelectionHelp() string {
+	return helpLine([]helpItem{
+		{"type", "filter"},
+		{"↑/↓", "navigate"},
+		{"ENTER", "select"},
+		{"ESC", "cancel"},
+	})
+}
 
-	// --- Header banner ---
-	b.WriteString(renderHeader(m, "Select Model"))
-	b.WriteString("\n\n")
+func modelSelectionViewportHeight(m Model) int {
+	if m.height <= 0 {
+		return 0
+	}
+	search := SearchLabel.Render("🔍 Search: ") + m.filterInput.View()
+	fixed := lipgloss.Height(renderHeader(m, "Select Model")) + lipgloss.Height(search) +
+		lipgloss.Height(modelSelectionHelp()) + lipgloss.Height(renderStatusBar(m, "Select Model", len(m.filteredModels)))
+	return max(1, m.height-fixed-4) // five vertical components have four separators
+}
 
-	// --- Empty models list ---
+func syncModelViewport(m *Model) {
+	if m.width <= 0 || m.height <= 0 {
+		return
+	}
+	m.modelViewport.Width = max(1, m.width)
+	m.modelViewport.Height = modelSelectionViewportHeight(*m)
+	content, selectedStart, selectedEnd := renderModelSelectionContent(*m)
+	m.modelViewport.SetContent(content)
+	ensureViewportRange(&m.modelViewport, selectedStart, selectedEnd)
+}
+
+func renderModelSelectionContent(m Model) (string, int, int) {
 	if len(m.flatModels) == 0 {
-		b.WriteString(HelpStyle.Render("No models available"))
-		b.WriteByte('\n')
-		return finishModelSelection(m, &b)
+		return HelpStyle.Render("No models available"), 0, 0
 	}
-
-	// --- Filter input (with explicit Search label) ---
-	b.WriteString(SearchLabel.Render("🔍 Search: "))
-	b.WriteString(m.filterInput.View())
-	b.WriteString("\n\n")
-
-	// --- No filter results ---
 	if len(m.filteredModels) == 0 {
-		b.WriteString(HelpStyle.Render("No models match filter"))
-		b.WriteByte('\n')
-		return finishModelSelection(m, &b)
+		return HelpStyle.Render("No models match filter"), 0, 0
 	}
 
-	// --- Determine the current model (for CURRENT badge) ---
 	currentModel := currentModelFullName(m)
-
-	// --- Grouped display by provider ---
 	filteredSet := make(map[string]bool, len(m.filteredModels))
 	for _, model := range m.filteredModels {
 		filteredSet[model.FullName] = true
@@ -131,7 +152,19 @@ func viewModelSelection(m Model) string {
 	}
 	sort.Strings(providers)
 
-	flatIdx := 0
+	var blocks []string
+	flatIdx, line := 0, 0
+	selectedStart, selectedEnd := 0, 0
+	appendBlock := func(block string, selected bool) {
+		block = clipLines(block, m.width)
+		height := lipgloss.Height(block)
+		if selected {
+			selectedStart = line
+			selectedEnd = line + height - 1
+		}
+		blocks = append(blocks, block)
+		line += height
+	}
 	for _, provider := range providers {
 		models := append([]opencode.Model(nil), m.groupedModels[provider]...)
 		sort.Slice(models, func(i, j int) bool {
@@ -149,9 +182,7 @@ func viewModelSelection(m Model) string {
 			continue
 		}
 
-		// Provider badge — pill-style header per provider.
-		b.WriteString(renderProviderBadge(provider))
-		b.WriteByte('\n')
+		appendBlock(renderProviderBadge(provider), false)
 
 		for _, model := range models {
 			if !filteredSet[model.FullName] {
@@ -161,32 +192,11 @@ func viewModelSelection(m Model) string {
 			isSelected := flatIdx == m.modelCursor
 			isCurrent := model.FullName == currentModel
 
-			b.WriteString(renderModelRow(model, isSelected, isCurrent))
-			b.WriteByte('\n')
+			appendBlock(renderModelRow(model, isSelected, isCurrent, m.width), isSelected)
 			flatIdx++
 		}
-		b.WriteByte('\n')
 	}
-
-	// --- Help footer (navigation hints) ---
-	b.WriteString(helpLine([]helpItem{
-		{"type", "filter"},
-		{"↑/↓", "navigate"},
-		{"ENTER", "select"},
-		{"ESC", "cancel"},
-	}))
-
-	// --- Status bar ---
-	return finishModelSelection(m, &b)
-}
-
-// finishModelSelection appends the status bar and returns the buffer's
-// contents. Extracted so the early-return paths (empty list, no matches)
-// share the same footer treatment.
-func finishModelSelection(m Model, b *strings.Builder) string {
-	b.WriteString("\n")
-	b.WriteString(renderStatusBar(m, "Select Model", len(m.filteredModels)))
-	return b.String()
+	return strings.Join(blocks, "\n"), selectedStart, selectedEnd
 }
 
 // renderProviderBadge renders a provider name as a colored pill in the model
@@ -198,23 +208,24 @@ func renderProviderBadge(provider string) string {
 
 // renderModelRow renders a single model row in the selection list. The cursor
 // is indicated by '▶' and the current model by a '★ CURRENT' pill.
-func renderModelRow(model opencode.Model, isSelected, isCurrent bool) string {
+func renderModelRow(model opencode.Model, isSelected, isCurrent bool, width int) string {
 	cursor := "  "
 	if isSelected {
 		cursor = SelectedPrefix.Render("▶ ") + " "
 	}
 
-	line := cursor + model.ID
-
+	// Keep provider identity visible even when its group header has scrolled
+	// outside the viewport.
+	modelName := model.FullName
+	badge := ""
 	if isCurrent {
-		// Pad to align the CURRENT pill consistently. Width tuned for
-		// typical model IDs; the pill is colored green to draw attention.
-		const padWidth = 28
-		if len(model.ID) < padWidth {
-			line += strings.Repeat(" ", padWidth-len(model.ID))
+		badge = " " + CurrentBadge.Render("★ current")
+		if width > 0 {
+			available := max(1, width-lipgloss.Width(cursor)-lipgloss.Width(badge))
+			modelName = clipLines(modelName, available)
 		}
-		line += " " + CurrentBadge.Render("★ current")
 	}
+	line := cursor + modelName + badge
 
 	if isSelected {
 		return SelectedStyle.Render(line)
@@ -271,13 +282,16 @@ func updateModelSelection(m Model, msg tea.Msg) (Model, tea.Cmd) {
 	case keyMsg.Type == tea.KeyBackspace:
 		m.filterInput, _ = m.filterInput.Update(keyMsg)
 		m.modelCursor = 0
-		return applyFilter(m), nil
+		m = applyFilter(m)
+		syncModelViewport(&m)
+		return m, nil
 
 	// --- Cursor down ---
 	case keyMsg.Type == tea.KeyDown || keyMsg.Type == tea.KeyCtrlN:
 		if len(m.filteredModels) > 0 && m.modelCursor < len(m.filteredModels)-1 {
 			m.modelCursor++
 		}
+		syncModelViewport(&m)
 		return m, nil
 
 	// --- Cursor up ---
@@ -285,13 +299,16 @@ func updateModelSelection(m Model, msg tea.Msg) (Model, tea.Cmd) {
 		if m.modelCursor > 0 {
 			m.modelCursor--
 		}
+		syncModelViewport(&m)
 		return m, nil
 
 	// --- Typing: update filter input, reset cursor ---
 	case keyMsg.Type == tea.KeyRunes && len(keyMsg.Runes) > 0:
 		m.filterInput, _ = m.filterInput.Update(keyMsg)
 		m.modelCursor = 0
-		return applyFilter(m), nil
+		m = applyFilter(m)
+		syncModelViewport(&m)
+		return m, nil
 
 	// --- Unmapped key: no-op ---
 	default:
@@ -344,4 +361,5 @@ func initModelSelectionScreen(m *Model) {
 	sort.Slice(m.filteredModels, func(i, j int) bool {
 		return m.filteredModels[i].FullName < m.filteredModels[j].FullName
 	})
+	syncModelViewport(m)
 }

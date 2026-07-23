@@ -13,10 +13,17 @@ package tui
 
 import (
 	"github.com/charmbracelet/bubbles/textinput"
+	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 
 	"github.com/lleontor705/opencode-model-selector/internal/config"
 	"github.com/lleontor705/opencode-model-selector/internal/opencode"
+)
+
+const (
+	minTerminalWidth  = 40
+	minTerminalHeight = 12
 )
 
 // appState enumerates the five screens of the TUI state machine (design #606,
@@ -107,6 +114,10 @@ type Model struct {
 	filterInput textinput.Model
 	// fieldInput captures typed values on ScreenFieldInput.
 	fieldInput textinput.Model
+	// Each scrolling screen owns a Bubbles viewport. The existing screen-owned
+	// cursors remain the source of truth; viewport offsets only control clipping.
+	agentViewport viewport.Model
+	modelViewport viewport.Model
 	// filteredModels is the result of applying filterInput.Value() to
 	// flatModels. Maintained by model_select.go in a later task.
 	filteredModels []opencode.Model
@@ -173,6 +184,8 @@ func NewModel(cfg *config.Config, grouped map[string][]opencode.Model, backupCou
 	// without re-allocating.
 	m.filterInput = textinput.New()
 	m.fieldInput = textinput.New()
+	m.agentViewport = viewport.New(0, 0)
+	m.modelViewport = viewport.New(0, 0)
 
 	// Populate agent lists from the config when present. GetAgents already
 	// filters out system agents (REQ-CFG-008) so we do not repeat that here.
@@ -228,6 +241,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
+		m.filterInput.Width = max(1, msg.Width-lipgloss.Width("🔍 Search: ")-1)
+		m.agentViewport.Width = max(1, msg.Width)
+		m.agentViewport.Height = agentListViewportHeight(m)
+		m.modelViewport.Width = max(1, msg.Width)
+		m.modelViewport.Height = modelSelectionViewportHeight(m)
+		syncAgentViewport(&m)
+		syncModelViewport(&m)
 		return m, nil
 
 	case tea.KeyMsg:
@@ -311,6 +331,10 @@ func (m Model) View() string {
 	if m.config == nil {
 		return ErrorStyle.Render("opencode-model-selector: no config loaded")
 	}
+	if m.width > 0 && m.height > 0 &&
+		(m.width < minTerminalWidth || m.height < minTerminalHeight) {
+		return renderTerminalTooSmall(m.width, m.height)
+	}
 
 	switch m.state {
 	case ScreenAgentList:
@@ -325,5 +349,18 @@ func (m Model) View() string {
 		return viewSaveConfirm(m)
 	default:
 		return ErrorStyle.Render("unknown screen state")
+	}
+}
+
+func ensureViewportRange(vp *viewport.Model, start, end int) {
+	if vp.Height <= 0 {
+		return
+	}
+	if start < vp.YOffset {
+		vp.SetYOffset(start)
+		return
+	}
+	if end >= vp.YOffset+vp.Height {
+		vp.SetYOffset(max(0, end-vp.Height+1))
 	}
 }

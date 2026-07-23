@@ -18,8 +18,10 @@ package tui
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 )
 
 // App constants — surfaced here so the header, status bar, and any future
@@ -70,11 +72,15 @@ func renderHeader(m Model, screenTitle string) string {
 	// Compose the inner content and wrap in the rounded box.
 	content := lipgloss.JoinVertical(lipgloss.Left, titleLine, taglineLine)
 
+	boxWidth := headerBoxWidth
+	if m.width > 0 {
+		boxWidth = min(boxWidth, max(1, m.width-4))
+	}
 	box := HeaderBoxStyle.
-		Width(headerBoxWidth).
+		Width(boxWidth).
 		Render(content)
 
-	return box
+	return clipLines(box, m.width)
 }
 
 // renderStatusBar renders the persistent bottom-of-screen status bar.
@@ -110,19 +116,48 @@ func renderStatusBar(m Model, screenName string, modelCount int) string {
 		" " +
 		HelpStyle.Render("for help"))
 
-	// Fill the middle with spaces. Width is conservative — the bar collapses
-	// gracefully on narrow terminals.
-	const barWidth = 80
+	// Fill the middle with spaces using the current terminal width.
+	barWidth := 80
+	if m.width > 0 {
+		barWidth = max(1, m.width-StatusBarStyle.GetHorizontalFrameSize())
+	}
 	gap := barWidth - lipgloss.Width(left) - lipgloss.Width(right)
 	if gap < 1 {
-		gap = 1
+		right = ""
+		gap = max(0, barWidth-lipgloss.Width(left))
 	}
 
-	return StatusBarStyle.Render(
-		left +
-			lipgloss.NewStyle().Width(gap).Render("") +
+	return clipLines(StatusBarStyle.Render(
+		left+
+			lipgloss.NewStyle().Width(gap).Render("")+
 			right,
-	)
+	), m.width)
+}
+
+func renderTerminalTooSmall(width, height int) string {
+	lines := []string{
+		ErrorStyle.Render("Terminal too small"),
+		fmt.Sprintf("Need at least %dx%d; current %dx%d", minTerminalWidth, minTerminalHeight, width, height),
+	}
+	if height > 0 && len(lines) > height {
+		lines = lines[:height]
+	}
+	return clipLines(strings.Join(lines, "\n"), width)
+}
+
+// clipLines truncates styled terminal output by display cells while preserving
+// ANSI sequences and wide graphemes.
+func clipLines(value string, width int) string {
+	if width <= 0 {
+		return value
+	}
+	lines := strings.Split(value, "\n")
+	for i, line := range lines {
+		if lipgloss.Width(line) > width {
+			lines[i] = ansi.Truncate(line, width, "…")
+		}
+	}
+	return strings.Join(lines, "\n")
 }
 
 // joinWithDot joins string parts with " · " separators — the visual glue used
@@ -191,4 +226,3 @@ func plural(n int) string {
 	}
 	return "s"
 }
-
