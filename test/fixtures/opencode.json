@@ -1,0 +1,108 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "agent": {
+    "compactación": {
+      "mode": "primary",
+      "description": "System agent for context compaction",
+      "prompt": "You compact conversation context to preserve key information."
+    },
+    "title": {
+      "mode": "primary",
+      "description": "System agent for generating session titles",
+      "prompt": "You generate concise titles for coding sessions."
+    },
+    "summary": {
+      "mode": "primary",
+      "description": "System agent for generating session summaries",
+      "prompt": "You generate structured summaries of completed work."
+    },
+    "build": {
+      "mode": "primary",
+      "disable": true,
+      "description": "Build and compilation agent (disabled by default)",
+      "prompt": "You handle build tasks and compilation."
+    },
+    "plan": {
+      "mode": "primary",
+      "temperature": 0.4,
+      "description": "Planning and task decomposition agent",
+      "prompt": "You break down complex tasks into actionable steps."
+    },
+    "general": {
+      "mode": "subagent",
+      "description": "General-purpose subagent for miscellaneous tasks",
+      "prompt": "You handle general tasks."
+    },
+    "explore": {
+      "mode": "subagent",
+      "description": "Codebase exploration subagent",
+      "prompt": "You explore and map codebases."
+    },
+    "code-reviewer": {
+      "mode": "subagent",
+      "model": "anthropic/claude-sonnet-4-20250514",
+      "description": "Code review subagent",
+      "prompt": "You review code for quality, bugs, and best practices."
+    },
+    "debug": {
+      "mode": "subagent",
+      "description": "Debugging subagent",
+      "prompt": "You diagnose and fix bugs."
+    },
+    "docs": {
+      "mode": "subagent",
+      "description": "Documentation subagent",
+      "prompt": "You write and update documentation."
+    },
+    "security-auditor": {
+      "mode": "subagent",
+      "description": "Security audit subagent",
+      "prompt": "You identify security vulnerabilities."
+    },
+    "orchestrator": {
+      "mode": "subagent",
+      "description": "Orchestration subagent for coordinating multi-agent work",
+      "prompt": "You coordinate work across agents."
+    },
+    "team-lead": {
+      "mode": "subagent",
+      "description": "Team lead subagent for managing task groups",
+      "prompt": "You lead a group of agents to complete related tasks."
+    },
+    "parallel-dispatch": {
+      "mode": "subagent",
+      "hidden": true,
+      "description": "Internal parallel dispatch subagent",
+      "prompt": "You dispatch independent tasks in parallel."
+    }
+  },
+  "permission": {
+    "edit": "ask",
+    "bash": "ask",
+    "webfetch": "allow"
+  },
+  "mcp": {
+    "zai-coding-plan": {
+      "type": "local",
+      "env": {
+        "Z_AI_API_KEY": "fake-key-aaaa-bbbb"
+      },
+      "command": [
+        "npx",
+        "-y",
+        "fake-mcp-server"
+      ]
+    },
+    "context7": {
+      "type": "local",
+      "env": {
+        "CONTEXT7_API_KEY": "fake-key-cccc-dddd"
+      },
+      "command": [
+        "npx",
+        "-y",
+        "fake-context7-server"
+      ]
+    }
+  }
+}
