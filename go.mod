@@ -1,4 +1,4 @@
-module opencode-model-selector
+module github.com/lleontor705/opencode-model-selector
 
 go 1.26.4
 

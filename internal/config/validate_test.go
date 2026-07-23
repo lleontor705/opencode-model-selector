@@ -5,7 +5,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
-	"opencode-model-selector/internal/opencode"
+	"github.com/lleontor705/opencode-model-selector/internal/opencode"
 )
 
 // ---------------------------------------------------------------------------

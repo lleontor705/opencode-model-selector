@@ -20,7 +20,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"opencode-model-selector/internal/config"
+	"github.com/lleontor705/opencode-model-selector/internal/config"
 )
 
 // newSaveConfirmModel constructs a Model positioned on the Save Confirm screen

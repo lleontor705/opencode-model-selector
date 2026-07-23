@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="./assets/opencode-model-selector-logo.svg" width="800">
+  <img alt="opencode-model-selector Logo" src="./assets/opencode-model-selector-logo.svg" width="800" />
 </p>
 
 <p align="center">
@@ -10,10 +10,13 @@
 </p>
 
 <p align="center">
-  <a href="docs/INSTALLATION.md">Installation</a> &bull;
+  <a href="#quick-start">Quick Start</a> &bull;
+  <a href="#why">Why?</a> &bull;
   <a href="#features">Features</a> &bull;
+  <a href="#cli-usage">CLI Usage</a> &bull;
   <a href="#architecture">Architecture</a> &bull;
-  <a href="#contributing">Contributing</a>
+  <a href="./docs/INSTALLATION.md">Installation</a> &bull;
+  <a href="./CONTRIBUTING.md">Contributing</a>
 </p>
 
 ---
@@ -47,21 +50,34 @@
 └─────────────────────────────────────────────────────────────┘
 ```
 
+## Why?
+
+Manually editing `opencode.json` to assign models to agents is error-prone. You don't know which models are available without running `opencode models` separately, and one wrong edit can corrupt the JSON or leak API keys.
+
+| | Manual JSON Editing | opencode-model-selector |
+|---|:---:|:---:|
+| See available models | ❌ Run `opencode models` separately | ✅ Listed in TUI with fuzzy filter |
+| Model validation | ❌ No validation | ✅ Strict validation against `opencode models` |
+| Safe editing | ❌ Risk of JSON corruption | ✅ Atomic writes + timestamped backups |
+| API key safety | ⚠️ Easy to accidentally expose | ✅ Never logged, 0o600 perms |
+| Cross-platform | ❌ Manual path resolution | ✅ Windows, macOS, Linux |
+| Field preservation | ⚠️ Easy to drop keys | ✅ All unknown fields preserved |
+
 ## Quick Start
 
 ```bash
 # Install
-go install github.com/lleontor705/opencode-model-selector/cmd@latest  # all platforms
+go install github.com/lleontor705/opencode-model-selector/cmd@latest
 
 # Run
-opencode-model-selector              # interactive TUI
+opencode-model-selector                # interactive TUI
 opencode-model-selector --list-models  # list available models
 opencode-model-selector --list-agents  # list agents and config
 ```
 
-Prerequisites: [OpenCode CLI](https://opencode.ai) installed and on your `$PATH`.
+**Prerequisites:** [OpenCode CLI](https://opencode.ai) on your `$PATH`, Go 1.26+.
 
-For Homebrew, pre-built binaries, and build-from-source instructions, see [Installation](docs/INSTALLATION.md).
+For detailed installation instructions, see [INSTALLATION.md](./docs/INSTALLATION.md).
 
 ## Features
 
@@ -98,6 +114,15 @@ opencode-model-selector --backup-count 10
 | `--list-agents` | `false` | List agents with current field values |
 | `--backup-count` | `5` | Number of backups to retain (0 to disable) |
 
+## Documentation
+
+| Document | Description |
+|----------|-------------|
+| [Installation](./docs/INSTALLATION.md) | Multi-platform installation guide |
+| [Contributing](./CONTRIBUTING.md) | Issue-first workflow, conventions, labels |
+| [Changelog](./CHANGELOG.md) | Release history |
+| [License](./LICENSE) | MIT License |
+
 ## Architecture
 
 ```
@@ -126,3 +151,10 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for the full contribution workflow, code 
 ## License
 
 MIT
+
+---
+
+<p align="center">
+  Built with <a href="https://charm.sh/">Bubbletea</a> &bull;
+  Powered by <a href="https://go.dev/">Go</a>
+</p>

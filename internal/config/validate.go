@@ -1,6 +1,6 @@
 package config
 
-import "opencode-model-selector/internal/opencode"
+import "github.com/lleontor705/opencode-model-selector/internal/opencode"
 
 // ValidateModel checks if a model ID exists in the available models list.
 //
