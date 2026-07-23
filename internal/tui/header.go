@@ -18,8 +18,10 @@ package tui
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 )
 
 // App constants — surfaced here so the header, status bar, and any future
@@ -37,7 +39,17 @@ const (
 	// conservatively so the banner looks balanced in typical 80-120 column
 	// terminals; on wider terminals the right padding absorbs the slack.
 	headerBoxWidth = 60
+	// fullHelpMinWidth is the first terminal width that renders the verbose
+	// screen help. Narrower supported terminals use complete compact wording.
+	fullHelpMinWidth = 70
 )
+
+func renderResponsiveHelp(width int, full, compact string) string {
+	if width > 0 && width < fullHelpMinWidth {
+		return HelpStyle.Render(compact)
+	}
+	return HelpStyle.Render(full)
+}
 
 // renderHeader renders the stylized top-of-screen banner. The banner is a
 // rounded box with the app name as a chip-style title and the tagline below.
@@ -70,11 +82,15 @@ func renderHeader(m Model, screenTitle string) string {
 	// Compose the inner content and wrap in the rounded box.
 	content := lipgloss.JoinVertical(lipgloss.Left, titleLine, taglineLine)
 
+	boxWidth := headerBoxWidth
+	if m.width > 0 {
+		boxWidth = min(boxWidth, max(1, m.width-4))
+	}
 	box := HeaderBoxStyle.
-		Width(headerBoxWidth).
+		Width(boxWidth).
 		Render(content)
 
-	return box
+	return clipLines(box, m.width)
 }
 
 // renderStatusBar renders the persistent bottom-of-screen status bar.
@@ -110,19 +126,48 @@ func renderStatusBar(m Model, screenName string, modelCount int) string {
 		" " +
 		HelpStyle.Render("for help"))
 
-	// Fill the middle with spaces. Width is conservative — the bar collapses
-	// gracefully on narrow terminals.
-	const barWidth = 80
+	// Fill the middle with spaces using the current terminal width.
+	barWidth := 80
+	if m.width > 0 {
+		barWidth = max(1, m.width-StatusBarStyle.GetHorizontalFrameSize())
+	}
 	gap := barWidth - lipgloss.Width(left) - lipgloss.Width(right)
 	if gap < 1 {
-		gap = 1
+		right = ""
+		gap = max(0, barWidth-lipgloss.Width(left))
 	}
 
-	return StatusBarStyle.Render(
-		left +
-			lipgloss.NewStyle().Width(gap).Render("") +
+	return clipLines(StatusBarStyle.Render(
+		left+
+			lipgloss.NewStyle().Width(gap).Render("")+
 			right,
-	)
+	), m.width)
+}
+
+func renderTerminalTooSmall(width, height int) string {
+	lines := []string{
+		ErrorStyle.Render("Terminal too small"),
+		fmt.Sprintf("Need at least %dx%d; current %dx%d", minTerminalWidth, minTerminalHeight, width, height),
+	}
+	if height > 0 && len(lines) > height {
+		lines = lines[:height]
+	}
+	return clipLines(strings.Join(lines, "\n"), width)
+}
+
+// clipLines truncates styled terminal output by display cells while preserving
+// ANSI sequences and wide graphemes.
+func clipLines(value string, width int) string {
+	if width <= 0 {
+		return value
+	}
+	lines := strings.Split(value, "\n")
+	for i, line := range lines {
+		if lipgloss.Width(line) > width {
+			lines[i] = ansi.Truncate(line, width, "…")
+		}
+	}
+	return strings.Join(lines, "\n")
 }
 
 // joinWithDot joins string parts with " · " separators — the visual glue used
@@ -141,48 +186,6 @@ func joinWithDot(parts []string) []string {
 	return out
 }
 
-// helpItem is one entry in a keybinding help line: a key name (shown in bold
-// primary color) and a short description (shown in muted color).
-type helpItem struct {
-	key  string
-	desc string
-}
-
-// helpLine renders a single-line keybinding hint like:
-//   [j/k] navigate  [ENTER] edit  [s] save  [q] quit
-//
-// The keys are colored with HelpKey and descriptions with HelpStyle; an
-// em-space-equivalent gap separates each pair so the line is easy to scan.
-func helpLine(items []helpItem) string {
-	if len(items) == 0 {
-		return ""
-	}
-	parts := make([]string, 0, len(items))
-	for _, it := range items {
-		parts = append(parts,
-			HelpKey.Render(it.key)+
-				" "+
-				HelpStyle.Render(it.desc),
-		)
-	}
-	// Use a single space as the inter-pair separator; the gap is enough to
-	// visually separate key+desc pairs without crowding.
-	return HelpStyle.Render("  ") + joinHelp(parts, HelpStyle.Render("  "))
-}
-
-// joinHelp joins string parts with a single separator (kept separate from
-// joinWithDot to avoid coupling the dot separator with keybinding lines).
-func joinHelp(parts []string, sep string) string {
-	out := ""
-	for i, p := range parts {
-		if i > 0 {
-			out += sep
-		}
-		out += p
-	}
-	return out
-}
-
 // plural returns "s" when n != 1, "" otherwise. Tiny helper to keep the
 // status bar grammatically correct without importing a full pluralize lib.
 func plural(n int) string {
@@ -191,4 +194,3 @@ func plural(n int) string {
 	}
 	return "s"
 }
-

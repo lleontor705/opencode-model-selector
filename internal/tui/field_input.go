@@ -169,9 +169,16 @@ func viewFieldInput(m Model) string {
 
 	// --- Help footer ---
 	b.WriteByte('\n')
-	b.WriteString(HelpStyle.Render("ENTER: save  ESC: cancel"))
+	b.WriteString(fieldInputHelp(m.width))
 
 	return b.String()
+}
+
+func fieldInputHelp(width int) string {
+	return renderResponsiveHelp(width,
+		"Enter Apply · Esc Discard",
+		"Enter Apply · Esc Discard",
+	)
 }
 
 // updateFieldInput handles key presses on the Field Input screen.
@@ -180,8 +187,8 @@ func viewFieldInput(m Model) string {
 //   - typing:    appends characters to fieldInput, clears any stale error
 //   - Backspace: deletes from fieldInput, clears error
 //   - ENTER:     validates input; on success commits to config and returns to
-//     previousState; on failure shows error and stays on screen
-//   - ESC:       cancels, returns to previousState without changes
+//     its immutable origin; on failure shows error and stays on screen
+//   - ESC:       cancels, returns to its immutable origin without changes
 //
 // Non-key messages (e.g. cursor blink) are forwarded to the textinput.
 //
@@ -196,9 +203,9 @@ func updateFieldInput(m Model, msg tea.Msg) (Model, tea.Cmd) {
 	}
 
 	switch {
-	// --- ESC: cancel, return to previousState ---
+	// --- ESC: cancel, return to immutable origin ---
 	case keyMsg.Type == tea.KeyEsc || keyMsg.Type == tea.KeyEscape:
-		m.state = m.previousState
+		m.popScreen()
 		m.saveError = ""
 		return m, nil
 
@@ -226,7 +233,7 @@ func updateFieldInput(m Model, msg tea.Msg) (Model, tea.Cmd) {
 
 // commitFieldInput validates the current fieldInput value, commits it to the
 // config on success, or sets saveError on failure. On success it records the
-// change, marks the model dirty, and transitions back to previousState.
+// change, marks the model dirty, and transitions back to its immutable origin.
 func commitFieldInput(m Model) Model {
 	value := m.fieldInput.Value()
 	parsed, err := validateFieldInput(m.fieldEditing, value)
@@ -248,7 +255,7 @@ func commitFieldInput(m Model) Model {
 
 	m.RecordChange(m.selectedAgent, m.fieldEditing, oldVal, parsed)
 	m.saveError = ""
-	m.state = m.previousState
+	m.popScreen()
 	return m
 }
 

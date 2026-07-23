@@ -128,10 +128,10 @@ func countBackups(t *testing.T, dir string) int {
 // unexported), and it doubles as an end-to-end rendering check.
 const (
 	screenMarkerAgentList      = "opencode-model-selector" // viewAgentList title
-	screenMarkerAgentDetail    = "Agent: "                  // viewAgentDetail header
-	screenMarkerModelSelection = "Select Model"             // viewModelSelection title
-	screenMarkerFieldInput     = "Edit: "                   // viewFieldInput header
-	screenMarkerSaveConfirm    = "Save Changes?"            // viewSaveConfirm title
+	screenMarkerAgentDetail    = "Agent: "                 // viewAgentDetail header
+	screenMarkerModelSelection = "Select Model"            // viewModelSelection title
+	screenMarkerFieldInput     = "Edit: "                  // viewFieldInput header
+	screenMarkerSaveConfirm    = "Review changes"          // viewSaveConfirm title
 )
 
 // onAgentList reports whether the model is currently rendering the Agent List
@@ -1203,4 +1203,3 @@ func runBinaryFull(t *testing.T, binary string, args ...string) (string, string,
 	}
 	return stdoutBuf.String(), stderrBuf.String(), exitCode
 }
-

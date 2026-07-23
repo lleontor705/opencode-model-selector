@@ -49,13 +49,13 @@ func newModelSelectModel(t *testing.T, fieldEditing, agentName string) Model {
 	t.Helper()
 	m := NewModel(fixtureConfig(t), richGrouped(), 5)
 	m.state = ScreenModelSelection
-	m.previousState = ScreenAgentList
+	m.navigationStack = []appState{ScreenAgentList}
 	m.fieldEditing = fieldEditing
 	m.selectedAgent = agentName
 	m.filterInput = textinput.New()
 	m.filterInput.Placeholder = "Type to filter..."
 	m.filterInput.Focus()
-	m.cursor = 0
+	m.modelCursor = 0
 	// Initialize filteredModels to the full flat list (show all initially).
 	m.filteredModels = append([]opencode.Model(nil), m.flatModels...)
 	sort.Slice(m.filteredModels, func(i, j int) bool {
@@ -179,12 +179,12 @@ func TestApplyFilter_NoMatchProducesEmpty(t *testing.T) {
 // filtered list length, it is clamped to a valid index.
 func TestApplyFilter_ClampsCursor(t *testing.T) {
 	m := newModelSelectModel(t, "global", "")
-	m.cursor = 4 // beyond the 5 total models
+	m.modelCursor = 4                     // beyond the 5 total models
 	m.filterInput.SetValue("opencode-go") // narrows to 2
 	m = applyFilter(m)
-	assert.Less(t, m.cursor, len(m.filteredModels),
+	assert.Less(t, m.modelCursor, len(m.filteredModels),
 		"cursor MUST be clamped to a valid index after filtering")
-	assert.GreaterOrEqual(t, m.cursor, 0,
+	assert.GreaterOrEqual(t, m.modelCursor, 0,
 		"cursor MUST never be negative")
 }
 
@@ -194,7 +194,7 @@ func TestApplyFilter_EmptyListCursorStaysZero(t *testing.T) {
 	m := newModelSelectModel(t, "global", "")
 	m.filterInput.SetValue("ZZZNOMATCH")
 	m = applyFilter(m)
-	assert.Equal(t, 0, m.cursor,
+	assert.Equal(t, 0, m.modelCursor,
 		"cursor MUST be 0 when filtered list is empty")
 }
 
@@ -350,10 +350,8 @@ func TestViewModelSelection_ReturnsNonEmpty(t *testing.T) {
 func TestViewModelSelection_HelpFooter(t *testing.T) {
 	m := newModelSelectModel(t, "global", "")
 	out := viewModelSelection(m)
-	assert.True(t, containsAny(out, "ENTER", "enter"),
-		"help footer MUST mention ENTER for selection")
-	assert.True(t, containsAny(out, "ESC", "esc", "cancel"),
-		"help footer MUST mention ESC for cancel")
+	assert.Contains(t, out, "Enter Apply model · Esc Cancel",
+		"help footer MUST explain that Enter applies the model")
 }
 
 // ---------------------------------------------------------------------------
@@ -362,58 +360,58 @@ func TestViewModelSelection_HelpFooter(t *testing.T) {
 
 // TestUpdateModelSelection_J_MovesCursorDown verifies that 'j' increments the
 // cursor in the filtered list.
-func TestUpdateModelSelection_J_MovesCursorDown(t *testing.T) {
+func TestUpdateModelSelection_CtrlN_MovesCursorDown(t *testing.T) {
 	m := newModelSelectModel(t, "global", "")
-	require.Equal(t, 0, m.cursor)
+	require.Equal(t, 0, m.modelCursor)
 
-	newM, _ := updateModelSelection(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
-	assert.Equal(t, 1, newM.cursor,
-		"cursor MUST be 1 after pressing 'j'")
+	newM, _ := updateModelSelection(m, tea.KeyMsg{Type: tea.KeyCtrlN})
+	assert.Equal(t, 1, newM.modelCursor,
+		"cursor MUST be 1 after pressing Ctrl+N")
 }
 
 // TestUpdateModelSelection_DownArrow_MovesDown verifies Down arrow works like j.
 func TestUpdateModelSelection_DownArrow_MovesDown(t *testing.T) {
 	m := newModelSelectModel(t, "global", "")
 	newM, _ := updateModelSelection(m, tea.KeyMsg{Type: tea.KeyDown})
-	assert.Equal(t, 1, newM.cursor,
+	assert.Equal(t, 1, newM.modelCursor,
 		"Down arrow MUST move cursor down")
 }
 
 // TestUpdateModelSelection_J_StopsAtBottom verifies 'j' does not exceed the
 // last index.
-func TestUpdateModelSelection_J_StopsAtBottom(t *testing.T) {
+func TestUpdateModelSelection_CtrlN_StopsAtBottom(t *testing.T) {
 	m := newModelSelectModel(t, "global", "")
-	m.cursor = len(m.filteredModels) - 1 // last index
-	newM, _ := updateModelSelection(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
-	assert.Equal(t, len(m.filteredModels)-1, newM.cursor,
-		"cursor MUST NOT exceed the last index when pressing 'j'")
+	m.modelCursor = len(m.filteredModels) - 1 // last index
+	newM, _ := updateModelSelection(m, tea.KeyMsg{Type: tea.KeyCtrlN})
+	assert.Equal(t, len(m.filteredModels)-1, newM.modelCursor,
+		"cursor MUST NOT exceed the last index when pressing Ctrl+N")
 }
 
 // TestUpdateModelSelection_K_MovesCursorUp verifies that 'k' decrements cursor.
-func TestUpdateModelSelection_K_MovesCursorUp(t *testing.T) {
+func TestUpdateModelSelection_CtrlP_MovesCursorUp(t *testing.T) {
 	m := newModelSelectModel(t, "global", "")
-	m.cursor = 2
-	newM, _ := updateModelSelection(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'k'}})
-	assert.Equal(t, 1, newM.cursor,
-		"cursor MUST be 1 after pressing 'k' from 2")
+	m.modelCursor = 2
+	newM, _ := updateModelSelection(m, tea.KeyMsg{Type: tea.KeyCtrlP})
+	assert.Equal(t, 1, newM.modelCursor,
+		"cursor MUST be 1 after pressing Ctrl+P from 2")
 }
 
 // TestUpdateModelSelection_UpArrow_MovesUp verifies Up arrow works like k.
 func TestUpdateModelSelection_UpArrow_MovesUp(t *testing.T) {
 	m := newModelSelectModel(t, "global", "")
-	m.cursor = 2
+	m.modelCursor = 2
 	newM, _ := updateModelSelection(m, tea.KeyMsg{Type: tea.KeyUp})
-	assert.Equal(t, 1, newM.cursor,
+	assert.Equal(t, 1, newM.modelCursor,
 		"Up arrow MUST move cursor up")
 }
 
 // TestUpdateModelSelection_K_AtTopStaysAtZero verifies 'k' at cursor 0 stays.
-func TestUpdateModelSelection_K_AtTopStaysAtZero(t *testing.T) {
+func TestUpdateModelSelection_CtrlP_AtTopStaysAtZero(t *testing.T) {
 	m := newModelSelectModel(t, "global", "")
-	m.cursor = 0
-	newM, _ := updateModelSelection(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'k'}})
-	assert.Equal(t, 0, newM.cursor,
-		"cursor MUST stay at 0 when pressing 'k' at the top")
+	m.modelCursor = 0
+	newM, _ := updateModelSelection(m, tea.KeyMsg{Type: tea.KeyCtrlP})
+	assert.Equal(t, 0, newM.modelCursor,
+		"cursor MUST stay at 0 when pressing Ctrl+P at the top")
 }
 
 // ---------------------------------------------------------------------------
@@ -425,7 +423,7 @@ func TestUpdateModelSelection_K_AtTopStaysAtZero(t *testing.T) {
 // to previousState.
 func TestUpdateModelSelection_EnterOnGlobal_SetsGlobalModel(t *testing.T) {
 	m := newModelSelectModel(t, "global", "")
-	m.previousState = ScreenAgentList
+	m.navigationStack = []appState{ScreenAgentList}
 	require.False(t, m.dirty)
 
 	// Cursor 0 → first model in sorted filteredModels.
@@ -446,7 +444,7 @@ func TestUpdateModelSelection_EnterOnGlobal_SetsGlobalModel(t *testing.T) {
 // to previousState.
 func TestUpdateModelSelection_EnterOnAgent_SetsAgentModel(t *testing.T) {
 	m := newModelSelectModel(t, "model", "code-reviewer")
-	m.previousState = ScreenAgentDetail
+	m.navigationStack = []appState{ScreenAgentDetail}
 	require.False(t, m.dirty)
 
 	newM, _ := updateModelSelection(m, tea.KeyMsg{Type: tea.KeyEnter})
@@ -468,7 +466,7 @@ func TestUpdateModelSelection_EnterOnAgent_SetsAgentModel(t *testing.T) {
 func TestUpdateModelSelection_Enter_SelectsCorrectModel(t *testing.T) {
 	m := newModelSelectModel(t, "global", "")
 	// Move cursor to index 1.
-	m.cursor = 1
+	m.modelCursor = 1
 	expected := m.filteredModels[1].FullName
 
 	newM, _ := updateModelSelection(m, tea.KeyMsg{Type: tea.KeyEnter})
@@ -486,7 +484,7 @@ func TestUpdateModelSelection_Enter_SelectsCorrectModel(t *testing.T) {
 // returns to previousState without changes.
 func TestUpdateModelSelection_Esc_ReturnsToPrevious(t *testing.T) {
 	m := newModelSelectModel(t, "global", "")
-	m.previousState = ScreenAgentList
+	m.navigationStack = []appState{ScreenAgentList}
 	dirtyBefore := m.dirty
 
 	newM, _ := updateModelSelection(m, tea.KeyMsg{Type: tea.KeyEsc})
@@ -515,10 +513,10 @@ func TestUpdateModelSelection_TypingUpdatesFilter(t *testing.T) {
 // resets the cursor to 0.
 func TestUpdateModelSelection_TypingResetsCursor(t *testing.T) {
 	m := newModelSelectModel(t, "global", "")
-	m.cursor = 3
+	m.modelCursor = 3
 
 	newM, _ := updateModelSelection(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'g'}})
-	assert.Equal(t, 0, newM.cursor,
+	assert.Equal(t, 0, newM.modelCursor,
 		"typing MUST reset cursor to 0")
 }
 
@@ -555,12 +553,12 @@ func TestUpdateModelSelection_BackspaceDeletesFromFilter(t *testing.T) {
 // function routes ScreenModelSelection key presses to updateModelSelection.
 func TestUpdate_DispatchesToModelSelection(t *testing.T) {
 	m := newModelSelectModel(t, "global", "")
-	m.cursor = 0
+	m.modelCursor = 0
 
-	newM, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
+	newM, _ := m.Update(tea.KeyMsg{Type: tea.KeyCtrlN})
 	result, ok := newM.(Model)
 	require.True(t, ok, "Update must return the same Model type")
-	assert.Equal(t, 1, result.cursor,
+	assert.Equal(t, 1, result.modelCursor,
 		"global Update() MUST dispatch ScreenModelSelection to updateModelSelection")
 }
 
@@ -582,7 +580,7 @@ func TestView_DispatchesToModelSelection(t *testing.T) {
 // input (focused, empty value) and filteredModels.
 func TestUpdateAgentList_EnterOnGlobal_InitializesFilterInput(t *testing.T) {
 	m := NewModel(fixtureConfig(t), richGrouped(), 5)
-	m.cursor = 0 // __global__
+	m.agentCursor = 0 // __global__
 	// Pre-pollute the filter input to verify it gets reset.
 	m.filterInput.SetValue("stale")
 
@@ -592,7 +590,7 @@ func TestUpdateAgentList_EnterOnGlobal_InitializesFilterInput(t *testing.T) {
 		"filterInput MUST be reset to empty when entering model selection")
 	assert.NotEmpty(t, newM.filteredModels,
 		"filteredModels MUST be initialized with all models when entering model selection")
-	assert.Equal(t, 0, newM.cursor,
+	assert.Equal(t, 0, newM.modelCursor,
 		"cursor MUST be reset to 0 when entering model selection")
 }
 
@@ -603,8 +601,8 @@ func TestUpdateAgentDetail_EnterOnModel_InitializesFilterInput(t *testing.T) {
 	m := NewModel(fixtureConfig(t), richGrouped(), 5)
 	m.state = ScreenAgentDetail
 	m.selectedAgent = "code-reviewer"
-	m.selectedField = 0 // "model"
-	m.previousState = ScreenAgentList
+	m.detailCursor = 0 // "model"
+	m.navigationStack = []appState{ScreenAgentList}
 	m.filterInput.SetValue("stale")
 
 	newM, _ := updateAgentDetail(m, tea.KeyMsg{Type: tea.KeyEnter})
@@ -613,6 +611,6 @@ func TestUpdateAgentDetail_EnterOnModel_InitializesFilterInput(t *testing.T) {
 		"filterInput MUST be reset to empty when entering model selection from detail")
 	assert.NotEmpty(t, newM.filteredModels,
 		"filteredModels MUST be initialized with all models when entering model selection from detail")
-	assert.Equal(t, 0, newM.cursor,
+	assert.Equal(t, 0, newM.modelCursor,
 		"cursor MUST be reset to 0 when entering model selection from detail")
 }

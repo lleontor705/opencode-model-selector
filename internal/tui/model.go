@@ -12,11 +12,20 @@
 package tui
 
 import (
+	"reflect"
+
 	"github.com/charmbracelet/bubbles/textinput"
+	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 
 	"github.com/lleontor705/opencode-model-selector/internal/config"
 	"github.com/lleontor705/opencode-model-selector/internal/opencode"
+)
+
+const (
+	minTerminalWidth  = 40
+	minTerminalHeight = 12
 )
 
 // appState enumerates the five screens of the TUI state machine (design #606,
@@ -83,14 +92,15 @@ type Model struct {
 
 	// --- Navigation ---
 
-	// cursor is the currently highlighted row index on the active screen.
-	cursor int
+	// Each selectable screen owns its cursor so nested screens cannot overwrite
+	// the selection that must be restored when returning.
+	agentCursor  int
+	detailCursor int
+	modelCursor  int
 	// selectedAgent is the agent name being edited on ScreenAgentDetail.
 	selectedAgent string
-	// selectedField is the field index highlighted on ScreenAgentDetail.
-	selectedField int
-	// previousState is the screen to return to on ESC (single-deep stack).
-	previousState appState
+	// navigationStack stores immutable screen origins for nested transitions.
+	navigationStack []appState
 
 	// --- Agent list data (populated from config in NewModel) ---
 
@@ -106,6 +116,11 @@ type Model struct {
 	filterInput textinput.Model
 	// fieldInput captures typed values on ScreenFieldInput.
 	fieldInput textinput.Model
+	// Each scrolling screen owns a Bubbles viewport. The existing screen-owned
+	// cursors remain the source of truth; viewport offsets only control clipping.
+	agentViewport viewport.Model
+	modelViewport viewport.Model
+	saveViewport  viewport.Model
 	// filteredModels is the result of applying filterInput.Value() to
 	// flatModels. Maintained by model_select.go in a later task.
 	filteredModels []opencode.Model
@@ -114,9 +129,8 @@ type Model struct {
 
 	// dirty is true when any in-memory edit has not yet been persisted.
 	dirty bool
-	// changes records every in-memory mutation since the last successful
-	// save. The save-confirm screen renders this slice as a diff so the
-	// user can verify what will be written to disk.
+	// changes records the net in-memory mutations since the last successful
+	// save, coalesced by target and field for review before writing to disk.
 	changes []Change
 	// quitConfirm is true when the "quit anyway?" confirmation overlay is
 	// active on the Agent List screen. It is a sub-state of ScreenAgentList,
@@ -155,7 +169,6 @@ func NewModel(cfg *config.Config, grouped map[string][]opencode.Model, backupCou
 
 	m := Model{
 		state:          ScreenAgentList,
-		previousState:  ScreenAgentList,
 		config:         cfg,
 		groupedModels:  grouped,
 		editableFields: append([]string(nil), editableFieldSchema...),
@@ -173,6 +186,9 @@ func NewModel(cfg *config.Config, grouped map[string][]opencode.Model, backupCou
 	// without re-allocating.
 	m.filterInput = textinput.New()
 	m.fieldInput = textinput.New()
+	m.agentViewport = viewport.New(0, 0)
+	m.modelViewport = viewport.New(0, 0)
+	m.saveViewport = viewport.New(0, 0)
 
 	// Populate agent lists from the config when present. GetAgents already
 	// filters out system agents (REQ-CFG-008) so we do not repeat that here.
@@ -186,6 +202,21 @@ func NewModel(cfg *config.Config, grouped map[string][]opencode.Model, backupCou
 	return m
 }
 
+func (m *Model) pushScreen(next appState) {
+	m.navigationStack = append(m.navigationStack, m.state)
+	m.state = next
+}
+
+func (m *Model) popScreen() {
+	if len(m.navigationStack) == 0 {
+		m.state = ScreenAgentList
+		return
+	}
+	last := len(m.navigationStack) - 1
+	m.state = m.navigationStack[last]
+	m.navigationStack = m.navigationStack[:last]
+}
+
 // Init satisfies tea.Model. The TUI has no initial async work to schedule —
 // textinput cursor blink commands are issued when an input gains focus, not
 // at program start. Returning nil lets Bubbletea begin rendering immediately.
@@ -193,17 +224,57 @@ func (m Model) Init() tea.Cmd {
 	return nil
 }
 
-// RecordChange appends a Change entry to the model and marks it dirty. Call
-// this from every mutation site AFTER the config has been updated so OldVal
-// reflects the previous value and NewVal reflects the new one.
+// RecordChange coalesces mutations by target and field. The first old value is
+// retained while later edits replace the pending new value. Reverting to the
+// original value removes the net change entirely.
 func (m *Model) RecordChange(target, field string, oldVal, newVal interface{}) {
+	for i := range m.changes {
+		change := &m.changes[i]
+		if change.Target != target || change.Field != field {
+			continue
+		}
+		if valuesEqual(change.OldVal, newVal) {
+			m.changes = append(m.changes[:i], m.changes[i+1:]...)
+		} else {
+			change.NewVal = newVal
+		}
+		m.dirty = len(m.changes) > 0
+		return
+	}
+
+	if valuesEqual(oldVal, newVal) {
+		m.dirty = len(m.changes) > 0
+		return
+	}
 	m.changes = append(m.changes, Change{Target: target, Field: field, OldVal: oldVal, NewVal: newVal})
 	m.dirty = true
 }
 
-// Update is the global key/message dispatcher. It handles only the keys that
-// apply on EVERY screen (q, Ctrl+C, ESC, 's'); screen-specific keys are
-// routed to per-screen handlers added in subsequent tasks.
+func valuesEqual(left, right interface{}) bool {
+	if reflect.DeepEqual(left, right) {
+		return true
+	}
+	leftNumber, leftOK := numericValue(left)
+	rightNumber, rightOK := numericValue(right)
+	return leftOK && rightOK && leftNumber == rightNumber
+}
+
+func numericValue(value interface{}) (float64, bool) {
+	switch number := value.(type) {
+	case int:
+		return float64(number), true
+	case int64:
+		return float64(number), true
+	case float64:
+		return number, true
+	default:
+		return 0, false
+	}
+}
+
+// Update is the global key/message dispatcher. Ctrl+C remains global, while
+// printable commands are intercepted only when no focused text input owns
+// them. Screen-specific keys are routed to their handlers.
 //
 // Spec: REQ-TUI-003 (quit/save), REQ-TUI-007 (save trigger), REQ-TUI-008
 // (ESC navigation).
@@ -213,9 +284,24 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
+		m.filterInput.Width = max(1, msg.Width-lipgloss.Width("🔍 Search: ")-1)
+		m.agentViewport.Width = max(1, msg.Width)
+		m.agentViewport.Height = agentListViewportHeight(m)
+		m.modelViewport.Width = max(1, msg.Width)
+		m.modelViewport.Height = modelSelectionViewportHeight(m)
+		m.saveViewport.Width = max(1, msg.Width)
+		m.saveViewport.Height = saveReviewViewportHeight(m)
+		syncAgentViewport(&m)
+		syncModelViewport(&m)
+		syncSaveViewport(&m)
 		return m, nil
 
 	case tea.KeyMsg:
+		// Bubble Tea renders after every Update. A successful save therefore gets
+		// one complete Agent List frame before the next user action clears it.
+		if m.saveSuccess {
+			m.saveSuccess = false
+		}
 		// === GLOBAL KEYS (work on every screen) ===
 
 		// If quit confirmation is active, intercept all keys
@@ -239,7 +325,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 		}
 
-		// 'q': show quit confirmation if dirty, else quit
+		// Focused inputs and modals own every printable key.
+		if m.state == ScreenModelSelection {
+			return updateModelSelection(m, msg)
+		}
+		if m.state == ScreenFieldInput {
+			return updateFieldInput(m, msg)
+		}
+		if m.state == ScreenSaveConfirm {
+			return updateSaveConfirm(m, msg)
+		}
+
+		// Printable q/s are commands only on non-input screens.
 		if msg.Type == tea.KeyRunes && len(msg.Runes) == 1 && msg.Runes[0] == 'q' {
 			if m.dirty {
 				m.quitConfirm = true
@@ -251,8 +348,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// 's': transition to save-confirm if dirty
 		if msg.Type == tea.KeyRunes && len(msg.Runes) == 1 && msg.Runes[0] == 's' {
 			if m.dirty {
-				m.previousState = m.state
-				m.state = ScreenSaveConfirm
+				m.pushScreen(ScreenSaveConfirm)
 			}
 			return m, nil
 		}
@@ -265,21 +361,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return updateAgentList(m, msg)
 		case ScreenAgentDetail:
 			return updateAgentDetail(m, msg)
-		case ScreenModelSelection:
-			return updateModelSelection(m, msg)
-		case ScreenFieldInput:
-			return updateFieldInput(m, msg)
-		case ScreenSaveConfirm:
-			return updateSaveConfirm(m, msg)
-		}
-
-		// ESC pops the navigation stack (no-op on root)
-		if msg.Type == tea.KeyEsc || msg.Type == tea.KeyEscape {
-			if m.state == m.previousState {
-				return m, nil
-			}
-			m.state = m.previousState
-			return m, nil
 		}
 
 		return m, nil
@@ -301,6 +382,10 @@ func (m Model) View() string {
 	if m.config == nil {
 		return ErrorStyle.Render("opencode-model-selector: no config loaded")
 	}
+	if m.width > 0 && m.height > 0 &&
+		(m.width < minTerminalWidth || m.height < minTerminalHeight) {
+		return renderTerminalTooSmall(m.width, m.height)
+	}
 
 	switch m.state {
 	case ScreenAgentList:
@@ -315,5 +400,18 @@ func (m Model) View() string {
 		return viewSaveConfirm(m)
 	default:
 		return ErrorStyle.Render("unknown screen state")
+	}
+}
+
+func ensureViewportRange(vp *viewport.Model, start, end int) {
+	if vp.Height <= 0 {
+		return
+	}
+	if start < vp.YOffset {
+		vp.SetYOffset(start)
+		return
+	}
+	if end >= vp.YOffset+vp.Height {
+		vp.SetYOffset(max(0, end-vp.Height+1))
 	}
 }

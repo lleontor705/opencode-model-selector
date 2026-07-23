@@ -27,8 +27,8 @@ func newDetailModel(t *testing.T, agentName string) Model {
 	m := NewModel(fixtureConfig(t), sampleGrouped(), 5)
 	m.state = ScreenAgentDetail
 	m.selectedAgent = agentName
-	m.selectedField = 0 // "model" by default
-	m.previousState = ScreenAgentList
+	m.detailCursor = 0 // "model" by default
+	m.navigationStack = []appState{ScreenAgentList}
 	return m
 }
 
@@ -153,10 +153,17 @@ func TestViewAgentDetail_ReturnsNonEmpty(t *testing.T) {
 func TestViewAgentDetail_HelpFooterPresent(t *testing.T) {
 	m := newDetailModel(t, "code-reviewer")
 	out := viewAgentDetail(m)
-	assert.Contains(t, out, "ENTER",
-		"help footer MUST mention ENTER for editing")
-	assert.Contains(t, out, "ESC",
-		"help footer MUST mention ESC for going back")
+	assert.Contains(t, out, "Enter Edit",
+		"help footer MUST explain that Enter edits")
+	assert.Contains(t, out, "Esc Back",
+		"help footer MUST explain that Esc goes back")
+}
+
+func TestAgentDetail_HelpExplainsReviewAndSave(t *testing.T) {
+	m := newDetailModel(t, "code-reviewer")
+	out := viewAgentDetail(m)
+
+	assert.Contains(t, out, "Enter Edit · Space Toggle disable · S Review & Save · Esc Back")
 }
 
 // ---------------------------------------------------------------------------
@@ -169,10 +176,10 @@ func TestViewAgentDetail_HelpFooterPresent(t *testing.T) {
 // Spec: REQ-TUI-004 — Happy path — j navigates down.
 func TestUpdateAgentDetail_J_MovesFieldDown(t *testing.T) {
 	m := newDetailModel(t, "code-reviewer")
-	require.Equal(t, 0, m.selectedField, "precondition: selectedField starts at 0")
+	require.Equal(t, 0, m.detailCursor, "precondition: selectedField starts at 0")
 
 	newM, _ := updateAgentDetail(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
-	assert.Equal(t, 1, newM.selectedField, "selectedField MUST be 1 after pressing 'j'")
+	assert.Equal(t, 1, newM.detailCursor, "selectedField MUST be 1 after pressing 'j'")
 }
 
 // TestUpdateAgentDetail_J_StopsAtLastField verifies that pressing 'j' at the
@@ -181,10 +188,10 @@ func TestUpdateAgentDetail_J_MovesFieldDown(t *testing.T) {
 // Spec: REQ-TUI-004 — Edge case — no wrap past last field.
 func TestUpdateAgentDetail_J_StopsAtLastField(t *testing.T) {
 	m := newDetailModel(t, "code-reviewer")
-	m.selectedField = 5 // "disable" — last field
+	m.detailCursor = 5 // "disable" — last field
 
 	newM, _ := updateAgentDetail(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
-	assert.Equal(t, 5, newM.selectedField,
+	assert.Equal(t, 5, newM.detailCursor,
 		"selectedField MUST NOT exceed the last index (5) when pressing 'j'")
 }
 
@@ -194,20 +201,20 @@ func TestUpdateAgentDetail_J_StopsAtLastField(t *testing.T) {
 // Spec: REQ-TUI-004 — Happy path — k navigates up.
 func TestUpdateAgentDetail_K_MovesFieldUp(t *testing.T) {
 	m := newDetailModel(t, "code-reviewer")
-	m.selectedField = 2
+	m.detailCursor = 2
 
 	newM, _ := updateAgentDetail(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'k'}})
-	assert.Equal(t, 1, newM.selectedField, "selectedField MUST be 1 after pressing 'k' from 2")
+	assert.Equal(t, 1, newM.detailCursor, "selectedField MUST be 1 after pressing 'k' from 2")
 }
 
 // TestUpdateAgentDetail_K_AtTopStaysAtZero verifies that pressing 'k' at
 // selectedField 0 keeps it at 0.
 func TestUpdateAgentDetail_K_AtTopStaysAtZero(t *testing.T) {
 	m := newDetailModel(t, "code-reviewer")
-	m.selectedField = 0
+	m.detailCursor = 0
 
 	newM, _ := updateAgentDetail(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'k'}})
-	assert.Equal(t, 0, newM.selectedField,
+	assert.Equal(t, 0, newM.detailCursor,
 		"selectedField MUST stay at 0 when pressing 'k' at the top")
 }
 
@@ -216,15 +223,15 @@ func TestUpdateAgentDetail_K_AtTopStaysAtZero(t *testing.T) {
 func TestUpdateAgentDetail_DownArrow_MovesDown(t *testing.T) {
 	m := newDetailModel(t, "code-reviewer")
 	newM, _ := updateAgentDetail(m, tea.KeyMsg{Type: tea.KeyDown})
-	assert.Equal(t, 1, newM.selectedField, "Down arrow MUST move selectedField down")
+	assert.Equal(t, 1, newM.detailCursor, "Down arrow MUST move selectedField down")
 }
 
 // TestUpdateAgentDetail_UpArrow_MovesUp verifies the Up arrow works like 'k'.
 func TestUpdateAgentDetail_UpArrow_MovesUp(t *testing.T) {
 	m := newDetailModel(t, "code-reviewer")
-	m.selectedField = 3
+	m.detailCursor = 3
 	newM, _ := updateAgentDetail(m, tea.KeyMsg{Type: tea.KeyUp})
-	assert.Equal(t, 2, newM.selectedField, "Up arrow MUST move selectedField up")
+	assert.Equal(t, 2, newM.detailCursor, "Up arrow MUST move selectedField up")
 }
 
 // ---------------------------------------------------------------------------
@@ -237,15 +244,14 @@ func TestUpdateAgentDetail_UpArrow_MovesUp(t *testing.T) {
 // Spec: REQ-TUI-004 — Happy path — ENTER on model opens model picker.
 func TestUpdateAgentDetail_EnterOnModel_TransitionsToModelSelection(t *testing.T) {
 	m := newDetailModel(t, "code-reviewer")
-	m.selectedField = 0 // "model"
+	m.detailCursor = 0 // "model"
 
 	newM, _ := updateAgentDetail(m, tea.KeyMsg{Type: tea.KeyEnter})
 	assert.Equal(t, ScreenModelSelection, newM.state,
 		"ENTER on 'model' MUST transition to ScreenModelSelection")
 	assert.Equal(t, "model", newM.fieldEditing,
 		"fieldEditing MUST be 'model' after ENTER on model field")
-	assert.Equal(t, ScreenAgentDetail, newM.previousState,
-		"previousState MUST be ScreenAgentDetail so ESC returns here")
+	assert.Equal(t, []appState{ScreenAgentList, ScreenAgentDetail}, newM.navigationStack)
 }
 
 // TestUpdateAgentDetail_EnterOnTemperature_TransitionsToFieldInput verifies that
@@ -254,7 +260,7 @@ func TestUpdateAgentDetail_EnterOnModel_TransitionsToModelSelection(t *testing.T
 // Spec: REQ-TUI-004 — Happy path — ENTER on numeric field opens field input.
 func TestUpdateAgentDetail_EnterOnTemperature_TransitionsToFieldInput(t *testing.T) {
 	m := newDetailModel(t, "code-reviewer")
-	m.selectedField = 1 // "temperature"
+	m.detailCursor = 1 // "temperature"
 
 	newM, _ := updateAgentDetail(m, tea.KeyMsg{Type: tea.KeyEnter})
 	assert.Equal(t, ScreenFieldInput, newM.state,
@@ -267,7 +273,7 @@ func TestUpdateAgentDetail_EnterOnTemperature_TransitionsToFieldInput(t *testing
 // on the "color" field transitions to ScreenFieldInput.
 func TestUpdateAgentDetail_EnterOnColor_TransitionsToFieldInput(t *testing.T) {
 	m := newDetailModel(t, "code-reviewer")
-	m.selectedField = 3 // "color"
+	m.detailCursor = 3 // "color"
 
 	newM, _ := updateAgentDetail(m, tea.KeyMsg{Type: tea.KeyEnter})
 	assert.Equal(t, ScreenFieldInput, newM.state,
@@ -280,7 +286,7 @@ func TestUpdateAgentDetail_EnterOnColor_TransitionsToFieldInput(t *testing.T) {
 // on the "steps" field transitions to ScreenFieldInput.
 func TestUpdateAgentDetail_EnterOnSteps_TransitionsToFieldInput(t *testing.T) {
 	m := newDetailModel(t, "code-reviewer")
-	m.selectedField = 4 // "steps"
+	m.detailCursor = 4 // "steps"
 
 	newM, _ := updateAgentDetail(m, tea.KeyMsg{Type: tea.KeyEnter})
 	assert.Equal(t, ScreenFieldInput, newM.state,
@@ -295,7 +301,7 @@ func TestUpdateAgentDetail_EnterOnSteps_TransitionsToFieldInput(t *testing.T) {
 // Spec: REQ-TUI-004 — Happy path — ENTER on disable toggles.
 func TestUpdateAgentDetail_EnterOnDisable_Toggles(t *testing.T) {
 	m := newDetailModel(t, "code-reviewer")
-	m.selectedField = 5 // "disable"
+	m.detailCursor = 5 // "disable"
 	require.False(t, m.config.IsAgentDisabled("code-reviewer"),
 		"precondition: code-reviewer must NOT be disabled before toggle")
 
@@ -316,7 +322,7 @@ func TestUpdateAgentDetail_EnterOnDisable_Toggles(t *testing.T) {
 // Spec: REQ-TUI-004 — Happy path — SPACE on disable toggles.
 func TestUpdateAgentDetail_SpaceOnDisable_Toggles(t *testing.T) {
 	m := newDetailModel(t, "code-reviewer")
-	m.selectedField = 5 // "disable"
+	m.detailCursor = 5 // "disable"
 	require.False(t, m.config.IsAgentDisabled("code-reviewer"),
 		"precondition: code-reviewer must NOT be disabled before toggle")
 
@@ -333,7 +339,7 @@ func TestUpdateAgentDetail_SpaceOnDisable_Toggles(t *testing.T) {
 // Spec: REQ-TUI-004 — Edge case — SPACE only works for disable.
 func TestUpdateAgentDetail_SpaceOnModel_NoOp(t *testing.T) {
 	m := newDetailModel(t, "code-reviewer")
-	m.selectedField = 0 // "model"
+	m.detailCursor = 0 // "model"
 	require.False(t, m.dirty, "precondition: model must not be dirty")
 
 	newM, _ := updateAgentDetail(m, tea.KeyMsg{Type: tea.KeySpace})
@@ -341,7 +347,7 @@ func TestUpdateAgentDetail_SpaceOnModel_NoOp(t *testing.T) {
 		"SPACE on model MUST NOT change state")
 	assert.False(t, newM.dirty,
 		"SPACE on model MUST NOT set dirty")
-	assert.Equal(t, 0, newM.selectedField,
+	assert.Equal(t, 0, newM.detailCursor,
 		"SPACE on model MUST NOT move selectedField")
 }
 
@@ -355,7 +361,7 @@ func TestUpdateAgentDetail_SpaceOnModel_NoOp(t *testing.T) {
 // Spec: REQ-TUI-004 — Happy path — ESC returns to agent list.
 func TestUpdateAgentDetail_Esc_ReturnsToAgentList(t *testing.T) {
 	m := newDetailModel(t, "code-reviewer")
-	m.previousState = ScreenAgentList
+	m.navigationStack = []appState{ScreenAgentList}
 
 	newM, _ := updateAgentDetail(m, tea.KeyMsg{Type: tea.KeyEsc})
 	assert.Equal(t, ScreenAgentList, newM.state,
@@ -385,12 +391,12 @@ func containsAny(s string, subs ...string) bool {
 // moves the field cursor.
 func TestUpdate_DispatchesToAgentDetail(t *testing.T) {
 	m := newDetailModel(t, "code-reviewer")
-	m.selectedField = 0
+	m.detailCursor = 0
 
 	newM, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
 	result, ok := newM.(Model)
 	require.True(t, ok, "Update must return the same Model type")
-	assert.Equal(t, 1, result.selectedField,
+	assert.Equal(t, 1, result.detailCursor,
 		"global Update() MUST dispatch ScreenAgentDetail to updateAgentDetail")
 }
 
