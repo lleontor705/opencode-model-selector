@@ -4,6 +4,25 @@
 // It is the entry screen of the TUI and shows all user-facing agents grouped
 // into Primary Agents and Subagents, plus the Global Default Model entry.
 //
+// Visual layout (top → bottom):
+//
+//	╭─ opencode-model-selector ─────────────────────╮
+//	│  Interactive model selector for OpenCode...   │
+//	╰───────────────────────────────────────────────╯
+//
+//	[Global Default Model]
+//	  model: <value or (none)>
+//
+//	── Primary Agents ──
+//	  [cursor] agent-name  [DISABLED]
+//	    model: <value or (none)>
+//
+//	── Subagents ──
+//	  [cursor] agent-name  [H]
+//	    model: <value or (none)>
+//
+//	[ <Agents> · 11 agents · ● unsaved ]                  ? for help
+//
 // Spec coverage:
 //   - REQ-TUI-002: Agent list rendering (sections, model display, indicators)
 //   - REQ-TUI-003: Navigation (j/k, arrows, ENTER, s, q)
@@ -21,6 +40,11 @@ import (
 // item. Rendering checks for this key to apply the "Global Default Model"
 // label; ENTER checks for it to route to ScreenModelSelection.
 const globalItemKey = "__global__"
+
+// agentListScreenLabel is the human-readable screen name shown in the status
+// bar. Centralized here so the status bar text stays consistent if the screen
+// is renamed.
+const agentListScreenLabel = "Agents"
 
 // selectableItems returns the flat list of selectable items on the agent list
 // screen. Disabled agents are excluded from selection; hidden agents are
@@ -73,7 +97,7 @@ func selectableItems(m Model) []string {
 //	  [cursor] agent-name  [H]
 //	    model: <value or (none)>
 //
-//	j/k: navigate  ENTER: edit  s: save  q: quit
+//	[ <Agents> · 11 agents · ● unsaved ]                  ? for help
 //
 // Disabled agents appear visually (greyed) but are NOT selectable.
 // Hidden agents appear with [H] and ARE selectable.
@@ -88,13 +112,8 @@ func viewAgentList(m Model) string {
 
 	var b strings.Builder
 
-	// --- Title bar with dirty indicator ---
-	title := TitleStyle.Render("opencode-model-selector")
-	if m.dirty {
-		b.WriteString(DirtyIndicator.Render("*") + " " + title)
-	} else {
-		b.WriteString(title)
-	}
+	// --- Header banner ---
+	b.WriteString(renderHeader(m, "Agents"))
 	b.WriteString("\n\n")
 
 	// Build a disabled set for O(1) lookups during rendering.
@@ -118,7 +137,7 @@ func viewAgentList(m Model) string {
 	selectableIdx++
 
 	// --- Primary Agents section ---
-	b.WriteString(SectionHeader.Render("Primary Agents"))
+	b.WriteString(SectionHeader.Render("◆ Primary Agents"))
 	b.WriteByte('\n')
 	for _, name := range sortedCopy(m.primaryAgents) {
 		isDisabled := disabled[name]
@@ -134,7 +153,7 @@ func viewAgentList(m Model) string {
 	}
 
 	// --- Subagents section ---
-	b.WriteString(SectionHeader.Render("Subagents"))
+	b.WriteString(SectionHeader.Render("◆ Subagents"))
 	b.WriteByte('\n')
 	for _, name := range sortedCopy(m.subagents) {
 		isDisabled := disabled[name]
@@ -149,18 +168,27 @@ func viewAgentList(m Model) string {
 		b.WriteByte('\n')
 	}
 
-	// --- Help footer ---
-	b.WriteByte('\n')
-	b.WriteString(HelpStyle.Render("j/k: navigate  ENTER: edit  s: save  q: quit"))
-
-	// --- Quit confirmation overlay ---
-	// When m.quitConfirm is true, append a confirmation prompt below the help
-	// footer. The overlay renders on top of the existing agent list so the
-	// user can still see what they would lose.
+	// --- Quit confirmation overlay (rendered above the status bar so it is
+	// always visible to the user, but BELOW the section content so the user
+	// still sees what they would lose). ---
 	if m.quitConfirm {
 		b.WriteByte('\n')
 		b.WriteString(ErrorStyle.Render("⚠ You have unsaved changes. Quit anyway? (y/n)"))
+		b.WriteByte('\n')
 	}
+
+	// --- Help footer (keybinding hints) ---
+	b.WriteByte('\n')
+	b.WriteString(helpLine([]helpItem{
+		{"j/k", "navigate"},
+		{"ENTER", "edit"},
+		{"s", "save"},
+		{"q", "quit"},
+	}))
+
+	// --- Status bar (persistent footer) ---
+	b.WriteString("\n")
+	b.WriteString(renderStatusBar(m, agentListScreenLabel, len(m.primaryAgents)+len(m.subagents)))
 
 	return b.String()
 }
@@ -169,10 +197,10 @@ func viewAgentList(m Model) string {
 func renderGlobalRow(modelVal string, isSelected bool) string {
 	prefix := "  "
 	if isSelected {
-		prefix = "> "
+		prefix = SelectedPrefix.Render("▶ ") + " "
 	}
-	content := prefix + "[Global Default Model]\n" +
-		"    model: " + modelVal
+	content := prefix + FieldLabel.Render("[Global Default Model]") + "\n" +
+		"    model: " + FieldValue.Render(modelVal)
 	if isSelected {
 		return SelectedStyle.Render(content)
 	}
@@ -184,7 +212,7 @@ func renderGlobalRow(modelVal string, isSelected bool) string {
 func renderAgentRow(m Model, name string, isDisabled, isSelected bool) string {
 	prefix := "  "
 	if isSelected {
-		prefix = "> "
+		prefix = SelectedPrefix.Render("▶ ") + " "
 	}
 
 	modelVal := "(none)"
@@ -198,14 +226,14 @@ func renderAgentRow(m Model, name string, isDisabled, isSelected bool) string {
 
 	// Append indicator for hidden agents.
 	if m.config.IsAgentHidden(name) {
-		content += " [H]"
+		content += " " + HelpStyle.Render("[H]")
 	}
 	// Append indicator for disabled agents.
 	if isDisabled {
-		content += " [DISABLED]"
+		content += " " + ErrorStyle.Render("[DISABLED]")
 	}
 
-	content += "\n    model: " + modelVal
+	content += "\n    model: " + FieldValue.Render(modelVal)
 
 	switch {
 	case isDisabled:

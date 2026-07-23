@@ -107,14 +107,14 @@ func TestViewAgentDetail_TemperatureValueShownForPlan(t *testing.T) {
 }
 
 // TestViewAgentDetail_DisableFalseWhenNotDisabled verifies that the disable
-// field shows "false" for a non-disabled agent.
+// field shows a "✓ enabled" indicator for a non-disabled agent.
 //
 // Spec: REQ-TUI-004 — Happy path — disable value displayed.
 func TestViewAgentDetail_DisableFalseWhenNotDisabled(t *testing.T) {
 	m := newDetailModel(t, "code-reviewer")
 	out := viewAgentDetail(m)
-	assert.Contains(t, out, "false",
-		"disable field MUST show 'false' for a non-disabled agent")
+	assert.Contains(t, out, "✓ enabled",
+		"disable field MUST show '✓ enabled' for a non-disabled agent")
 }
 
 // TestViewAgentDetail_DisabledAgentShowsWarning verifies that when the selected
@@ -134,12 +134,12 @@ func TestViewAgentDetail_DisabledAgentShowsWarning(t *testing.T) {
 }
 
 // TestViewAgentDetail_DisabledAgentShowsDisableTrue verifies that for a disabled
-// agent, the disable field displays "true".
+// agent, the disable field displays "✗ disabled".
 func TestViewAgentDetail_DisabledAgentShowsDisableTrue(t *testing.T) {
 	m := newDetailModel(t, "build")
 	out := viewAgentDetail(m)
-	assert.Contains(t, out, "true",
-		"disable field MUST show 'true' for a disabled agent")
+	assert.Contains(t, out, "✗ disabled",
+		"disable field MUST show '✗ disabled' for a disabled agent")
 }
 
 // TestViewAgentDetail_ReturnsNonEmpty verifies a basic non-empty contract.
