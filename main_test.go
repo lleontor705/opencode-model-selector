@@ -737,3 +737,383 @@ func TestRun_DefaultModeIsTUI(t *testing.T) {
 	assert.Equal(t, modeTUI, opts.mode,
 		"default mode with no flags must be TUI")
 }
+
+// ---------------------------------------------------------------------------
+// parseFlags — Apply-Model Mode (REQ-CLI-001, REQ-CLI-002)
+//
+// Tests for --apply-model and --agents flags, their mutual requirement, and
+// dispatch precedence against existing modes.
+// ---------------------------------------------------------------------------
+
+// TestParseFlags_ApplyModel_ParsedCorrectly verifies that --apply-model and
+// --agents are parsed and mode resolves to modeApplyModel.
+//
+// Spec: REQ-CLI-001 — Scenario: Happy path — flag parsed
+func TestParseFlags_ApplyModel_ParsedCorrectly(t *testing.T) {
+	opts, code := parseFlags([]string{"--apply-model", "openai/gpt-5", "--agents", "all"})
+
+	require.Equal(t, 0, code)
+	assert.Equal(t, "openai/gpt-5", opts.applyModel)
+	assert.Equal(t, "all", opts.agentsCSV)
+	assert.Equal(t, modeApplyModel, opts.mode)
+}
+
+// TestParseFlags_ApplyModel_ValueWithSlashesPreserved verifies that model IDs
+// containing slashes and dashes are stored verbatim.
+//
+// Spec: REQ-CLI-001 — Scenario: Edge case — model ID containing slashes and dashes
+func TestParseFlags_ApplyModel_ValueWithSlashesPreserved(t *testing.T) {
+	opts, code := parseFlags([]string{
+		"--apply-model", "anthropic/claude-3-5-sonnet-20241022",
+		"--agents", "all",
+	})
+
+	require.Equal(t, 0, code)
+	assert.Equal(t, "anthropic/claude-3-5-sonnet-20241022", opts.applyModel,
+		"model ID with slashes and dashes must be preserved verbatim")
+}
+
+// TestParseFlags_AgentsAll_ParsedCorrectly verifies that --agents all is
+// stored as the literal string "all".
+//
+// Spec: REQ-CLI-002 — Scenario: Happy path — all
+func TestParseFlags_AgentsAll_ParsedCorrectly(t *testing.T) {
+	opts, code := parseFlags([]string{
+		"--apply-model", "openai/gpt-5",
+		"--agents", "all",
+	})
+
+	require.Equal(t, 0, code)
+	assert.Equal(t, "all", opts.agentsCSV)
+	assert.Equal(t, modeApplyModel, opts.mode)
+}
+
+// TestParseFlags_AgentsCSV_RawStored verifies that a comma-separated --agents
+// value is stored verbatim (trimming of whitespace happens in runApplyModel).
+//
+// Spec: REQ-CLI-002 — Scenario: Happy path — CSV with whitespace
+func TestParseFlags_AgentsCSV_RawStored(t *testing.T) {
+	opts, code := parseFlags([]string{
+		"--apply-model", "openai/gpt-5",
+		"--agents", "build, plan , explore",
+	})
+
+	require.Equal(t, 0, code)
+	assert.Equal(t, "build, plan , explore", opts.agentsCSV,
+		"CSV string must be stored raw; trimming happens in runApplyModel")
+	assert.Equal(t, modeApplyModel, opts.mode)
+}
+
+// TestParseFlags_ApplyModelWithoutAgents_Exits2 verifies that --apply-model
+// without --agents is a usage error (exit 2).
+//
+// Spec: REQ-CLI-002 — Scenario: Error — --apply-model without --agents
+func TestParseFlags_ApplyModelWithoutAgents_Exits2(t *testing.T) {
+	_, code := parseFlags([]string{"--apply-model", "openai/gpt-5"})
+
+	assert.Equal(t, 2, code,
+		"--apply-model without --agents must return exit code 2")
+}
+
+// TestParseFlags_AgentsWithoutApplyModel_Exits2 verifies that --agents without
+// --apply-model is also a usage error (exit 2).
+//
+// Spec: REQ-CLI-002 — Scenario: Error — --agents without --apply-model
+func TestParseFlags_AgentsWithoutApplyModel_Exits2(t *testing.T) {
+	_, code := parseFlags([]string{"--agents", "all"})
+
+	assert.Equal(t, 2, code,
+		"--agents without --apply-model must return exit code 2")
+}
+
+// TestParseFlags_Precedence_ApplyModelOverTUI verifies that apply-model
+// outranks TUI (the default) but is below list-*.
+//
+// Spec: REQ-CLI-001 — Dispatch precedence: list-models > list-agents > apply-model > TUI
+func TestParseFlags_Precedence_ApplyModelOverTUI(t *testing.T) {
+	opts, code := parseFlags([]string{
+		"--apply-model", "openai/gpt-5",
+		"--agents", "all",
+	})
+
+	require.Equal(t, 0, code)
+	assert.Equal(t, modeApplyModel, opts.mode,
+		"apply-model must take precedence over TUI default")
+}
+
+// TestParseFlags_Precedence_ListModelsOverApplyModel verifies that list-models
+// outranks apply-model.
+//
+// Spec: REQ-CLI-001 — Dispatch precedence: list-models > list-agents > apply-model > TUI
+func TestParseFlags_Precedence_ListModelsOverApplyModel(t *testing.T) {
+	opts, code := parseFlags([]string{
+		"--apply-model", "openai/gpt-5",
+		"--agents", "all",
+		"--list-models",
+	})
+
+	require.Equal(t, 0, code)
+	assert.Equal(t, modeListModels, opts.mode,
+		"list-models must take precedence over apply-model")
+}
+
+// TestParseFlags_Precedence_ListAgentsOverApplyModel verifies that list-agents
+// outranks apply-model.
+//
+// Spec: REQ-CLI-001 — Dispatch precedence: list-models > list-agents > apply-model > TUI
+func TestParseFlags_Precedence_ListAgentsOverApplyModel(t *testing.T) {
+	opts, code := parseFlags([]string{
+		"--apply-model", "openai/gpt-5",
+		"--agents", "all",
+		"--list-agents",
+	})
+
+	require.Equal(t, 0, code)
+	assert.Equal(t, modeListAgents, opts.mode,
+		"list-agents must take precedence over apply-model")
+}
+
+// ---------------------------------------------------------------------------
+// runApplyModel / applyModelWithModels — CLI Bulk Apply (REQ-CLI-003..008)
+//
+// These tests exercise the CLI bulk-apply logic via the testable inner function
+// applyModelWithModels, which accepts models as a parameter. The outer
+// runApplyModel is a thin wrapper that calls opencode.Detect + GetModels and
+// delegates — it cannot be unit-tested from the main package because the
+// opencode command/lookPath indirection variables are unexported.
+// ---------------------------------------------------------------------------
+
+// makeTempConfig copies the fixture opencode.json to a temp dir and loads it.
+// Returns a Config whose Path() points to the writable temp copy.
+func makeTempConfig(t *testing.T) *config.Config {
+	t.Helper()
+	fixturePath := resolveFixtureConfigPath(t)
+	src, err := os.ReadFile(fixturePath)
+	require.NoError(t, err)
+	tmpDir := t.TempDir()
+	dst := filepath.Join(tmpDir, "opencode.json")
+	require.NoError(t, os.WriteFile(dst, src, 0o644))
+	cfg, err := config.LoadConfig(dst)
+	require.NoError(t, err)
+	return cfg
+}
+
+// mockModels returns a small set of models for apply-model tests.
+func mockModels() []opencode.Model {
+	return []opencode.Model{
+		{Provider: "openai", ID: "gpt-5", FullName: "openai/gpt-5"},
+		{Provider: "anthropic", ID: "claude-sonnet-4-20250514", FullName: "anthropic/claude-sonnet-4-20250514"},
+	}
+}
+
+// makeEmptyConfig creates a config with ONLY system agents (no targetable
+// agents), used for the empty-target-set test.
+func makeEmptyConfig(t *testing.T) *config.Config {
+	t.Helper()
+	tmpDir := t.TempDir()
+	dst := filepath.Join(tmpDir, "opencode.json")
+	content := `{
+  "agent": {
+    "compactación": { "mode": "primary", "model": "old/model" },
+    "title":        { "mode": "primary", "model": "old/model" },
+    "summary":      { "mode": "primary", "model": "old/model" }
+  }
+}`
+	require.NoError(t, os.WriteFile(dst, []byte(content), 0o644))
+	cfg, err := config.LoadConfig(dst)
+	require.NoError(t, err)
+	return cfg
+}
+
+// createFakeBackups creates N fake backup files in the same directory as
+// configPath, using timestamps that sort lexicographically (oldest first).
+func createFakeBackups(t *testing.T, configPath string, count int) {
+	t.Helper()
+	dir := filepath.Dir(configPath)
+	for i := 0; i < count; i++ {
+		ts := fmt.Sprintf("2025010%d-120000", i)
+		bp := filepath.Join(dir, fmt.Sprintf("opencode.json.backup.%s", ts))
+		require.NoError(t, os.WriteFile(bp, []byte("{}"), 0o644))
+	}
+}
+
+// countBackups returns the number of backup files in the config directory.
+func countBackups(t *testing.T, configPath string) int {
+	t.Helper()
+	dir := filepath.Dir(configPath)
+	matches, err := filepath.Glob(filepath.Join(dir, "opencode.json.backup.*"))
+	require.NoError(t, err)
+	return len(matches)
+}
+
+// TestRunApplyModel_Success_All verifies that a valid model applied to "all"
+// mutates every non-system, non-disabled agent, creates a backup, and saves.
+//
+// Spec: REQ-CLI-003 — Scenario: Happy path — model valid
+// Spec: REQ-CLI-004 — Scenario: Happy path — backup created
+// Spec: REQ-CLI-005 — Scenario: Happy path — save succeeds
+func TestRunApplyModel_Success_All(t *testing.T) {
+	cfg := makeTempConfig(t)
+	models := mockModels()
+
+	err := applyModelWithModels(cfg, "openai/gpt-5", "all", 5, models)
+
+	require.NoError(t, err)
+
+	primary, subagents, _ := cfg.GetAgents()
+	for _, name := range append(primary, subagents...) {
+		if cfg.IsAgentDisabled(name) {
+			continue
+		}
+		val, ok := cfg.GetAgentField(name, "model")
+		require.True(t, ok, "agent %s must have model field set", name)
+		assert.Equal(t, "openai/gpt-5", val.(string),
+			"agent %s must have openai/gpt-5", name)
+	}
+
+	assert.Equal(t, 1, countBackups(t, cfg.Path()),
+		"exactly one backup must be created")
+}
+
+// TestRunApplyModel_Success_CSV verifies that a CSV list applies only to named
+// agents and leaves others untouched.
+//
+// Spec: REQ-CLI-002 — Scenario: Happy path — CSV
+func TestRunApplyModel_Success_CSV(t *testing.T) {
+	cfg := makeTempConfig(t)
+	models := mockModels()
+
+	err := applyModelWithModels(cfg, "openai/gpt-5", "plan, code-reviewer", 5, models)
+
+	require.NoError(t, err)
+
+	planVal, ok := cfg.GetAgentField("plan", "model")
+	require.True(t, ok)
+	assert.Equal(t, "openai/gpt-5", planVal)
+
+	crVal, ok := cfg.GetAgentField("code-reviewer", "model")
+	require.True(t, ok)
+	assert.Equal(t, "openai/gpt-5", crVal)
+
+	exploreVal, ok := cfg.GetAgentField("explore", "model")
+	if ok {
+		exploreStr, _ := exploreVal.(string)
+		assert.NotEqual(t, "openai/gpt-5", exploreStr,
+			"explore must NOT be modified by CSV apply")
+	}
+}
+
+// TestRunApplyModel_InvalidModel_Exits1 verifies that an unknown model returns
+// an error without mutating config or creating a backup.
+//
+// Spec: REQ-CLI-003 — Scenario: Error — unknown model
+func TestRunApplyModel_InvalidModel(t *testing.T) {
+	cfg := makeTempConfig(t)
+	models := mockModels()
+
+	err := applyModelWithModels(cfg, "bogus/model", "all", 5, models)
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid model")
+
+	crVal, ok := cfg.GetAgentField("code-reviewer", "model")
+	if ok {
+		assert.Equal(t, "anthropic/claude-sonnet-4-20250514", crVal.(string),
+			"config must NOT be mutated on validation failure")
+	}
+	assert.Equal(t, 0, countBackups(t, cfg.Path()),
+		"no backup must be created on validation failure")
+}
+
+// TestRunApplyModel_EmptyTargets verifies that an empty target set (config with
+// only system agents) exits successfully without creating a backup or saving.
+//
+// Spec: REQ-CLI-007 — Scenario: Happy path — config has zero non-system agents
+func TestRunApplyModel_EmptyTargets(t *testing.T) {
+	cfg := makeEmptyConfig(t)
+	models := mockModels()
+
+	stdout := captureStdout(t, func() {
+		err := applyModelWithModels(cfg, "openai/gpt-5", "all", 5, models)
+		assert.NoError(t, err)
+	})
+
+	assert.Contains(t, stdout, "0 agents updated")
+	assert.Equal(t, 0, countBackups(t, cfg.Path()),
+		"no backup for empty target set")
+}
+
+// TestRunApplyModel_BackupRetention verifies that --backup-count 2 keeps only
+// the 2 newest backups after save.
+//
+// Spec: REQ-CLI-006 — Scenario: Happy path — retention enforced
+func TestRunApplyModel_BackupRetention(t *testing.T) {
+	cfg := makeTempConfig(t)
+	createFakeBackups(t, cfg.Path(), 3)
+	models := mockModels()
+
+	err := applyModelWithModels(cfg, "openai/gpt-5", "all", 2, models)
+
+	require.NoError(t, err)
+	assert.Equal(t, 2, countBackups(t, cfg.Path()),
+		"exactly 2 backups must remain after retention")
+}
+
+// TestRunApplyModel_BackupDisabled verifies that backupCount=0 skips both
+// backup creation and cleanup while save still works.
+//
+// Spec: REQ-CLI-004 — Scenario: Edge case — backupCount == 0
+// Spec: REQ-CLI-006 — "--backup-count 0 skips both backup creation AND cleanup"
+func TestRunApplyModel_BackupDisabled(t *testing.T) {
+	cfg := makeTempConfig(t)
+	createFakeBackups(t, cfg.Path(), 2)
+	models := mockModels()
+
+	err := applyModelWithModels(cfg, "openai/gpt-5", "all", 0, models)
+
+	require.NoError(t, err)
+
+	assert.Equal(t, 2, countBackups(t, cfg.Path()),
+		"backupCount=0 must NOT create new backups or clean old ones")
+
+	planVal, ok := cfg.GetAgentField("plan", "model")
+	require.True(t, ok)
+	assert.Equal(t, "openai/gpt-5", planVal,
+		"save must still run even with backupCount=0")
+}
+
+// TestRunApplyModel_SkipsDisabled verifies that disabled agents appear in the
+// skipped summary and are not mutated.
+//
+// Spec: REQ-CLI-008 — Scenario: Happy path — 3 applied, 1 skipped
+// Spec: REQ-BULK-003 — disabled agents skipped
+func TestRunApplyModel_SkipsDisabled(t *testing.T) {
+	cfg := makeTempConfig(t)
+	models := mockModels()
+
+	stdout := captureStdout(t, func() {
+		err := applyModelWithModels(cfg, "openai/gpt-5", "all", 5, models)
+		assert.NoError(t, err)
+	})
+
+	assert.Contains(t, stdout, "Skipped")
+	assert.Contains(t, stdout, "build",
+		"disabled agent 'build' must appear in skipped list")
+}
+
+// TestRunApplyModel_StdoutSummary verifies the output format matches REQ-CLI-008.
+//
+// Spec: REQ-CLI-008 — Scenario: Happy path — summary format
+func TestRunApplyModel_StdoutSummary(t *testing.T) {
+	cfg := makeTempConfig(t)
+	models := mockModels()
+
+	stdout := captureStdout(t, func() {
+		err := applyModelWithModels(cfg, "openai/gpt-5", "plan", 5, models)
+		assert.NoError(t, err)
+	})
+
+	assert.Contains(t, stdout, "Model openai/gpt-5 applied to")
+	assert.Contains(t, stdout, "plan")
+	assert.Contains(t, stdout, "✓")
+}
