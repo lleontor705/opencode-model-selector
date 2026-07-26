@@ -211,6 +211,9 @@ func renderModelRow(model opencode.Model, isSelected, isCurrent bool, width int)
 // currentModelFullName returns the FullName of the model currently assigned to
 // the global default or the selected agent, depending on fieldEditing.
 func currentModelFullName(m Model) string {
+	if m.fieldEditing == fieldEditingBulkAll || m.fieldEditing == fieldEditingBulkList {
+		return ""
+	}
 	if m.fieldEditing == "global" {
 		if val, ok := m.config.GetGlobalModel(); ok && val != "" {
 			return val
@@ -302,19 +305,46 @@ func selectModelAtCursor(m Model) Model {
 
 	selected := m.filteredModels[m.modelCursor]
 
-	// Validate — should always pass since we're selecting from the list.
 	if !config.ValidateModel(selected.FullName, m.flatModels) {
 		return m
 	}
 
-	if m.fieldEditing == "global" {
+	switch m.fieldEditing {
+	case "global":
 		oldVal, _ := m.config.GetGlobalModel()
 		m.config.SetGlobalModel(selected.FullName)
 		m.RecordChange("global", "model", oldVal, selected.FullName)
-	} else {
+
+	case fieldEditingBulkAll:
+		primary, subagents, _ := m.config.GetAgents()
+		targets := append(append([]string(nil), primary...), subagents...)
+		for _, name := range targets {
+			if m.config.IsAgentDisabled(name) {
+				continue
+			}
+			oldVal, _ := m.config.GetAgentField(name, "model")
+			if err := m.config.SetAgentField(name, "model", selected.FullName); err != nil {
+				continue
+			}
+			m.RecordChange(name, "model", oldVal, selected.FullName)
+		}
+		m.bulkTargets = nil
+
+	case fieldEditingBulkList:
+		for _, name := range m.bulkTargets {
+			if m.config.IsAgentDisabled(name) {
+				continue
+			}
+			oldVal, _ := m.config.GetAgentField(name, "model")
+			if err := m.config.SetAgentField(name, "model", selected.FullName); err != nil {
+				continue
+			}
+			m.RecordChange(name, "model", oldVal, selected.FullName)
+		}
+		m.bulkTargets = nil
+
+	default:
 		oldVal, _ := m.config.GetAgentField(m.selectedAgent, "model")
-		// Per-agent model. May error if the agent is disabled, but the
-		// config layer handles that — we proceed only on success.
 		_ = m.config.SetAgentField(m.selectedAgent, "model", selected.FullName)
 		m.RecordChange(m.selectedAgent, "model", oldVal, selected.FullName)
 	}
