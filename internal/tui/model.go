@@ -28,6 +28,14 @@ const (
 	minTerminalHeight = 12
 )
 
+// Sentinel values for fieldEditing that distinguish bulk-apply flows from
+// single-agent or global edits. These are checked in selectModelAtCursor to
+// route the commit logic and in popScreen to clear bulk state on exit.
+const (
+	fieldEditingBulkAll  = "bulk-all"
+	fieldEditingBulkList = "bulk-list"
+)
+
 // appState enumerates the five screens of the TUI state machine (design #606,
 // Section 2 Decision 3). Ordering matters only for iota stability; do NOT
 // re-order existing entries.
@@ -50,6 +58,10 @@ const (
 	// ScreenSaveConfirm shows a summary of pending changes and triggers the
 	// atomic save flow (REQ-TUI-007).
 	ScreenSaveConfirm
+	// ScreenAgentMultiSelect shows a checkbox list of agents for Flow B
+	// bulk operations. ENTER transitions to ScreenModelSelection with
+	// fieldEditing="bulk-list".
+	ScreenAgentMultiSelect
 )
 
 // editableFieldSchema is the fixed list of fields exposed on the Agent Detail
@@ -140,6 +152,18 @@ type Model struct {
 	// fieldEditing records which field is being edited on ScreenFieldInput
 	// (or "global" / "model" sentinel values).
 	fieldEditing string
+	// bulkTargets holds the agent names selected on ScreenAgentMultiSelect.
+	// Populated when transitioning to ScreenModelSelection with
+	// fieldEditing="bulk-list". For fieldEditing="bulk-all" it stays nil
+	// because targets are resolved at commit time via GetAgents.
+	bulkTargets []string
+	// multiSelectItems is the cached list of selectable agent names for
+	// ScreenAgentMultiSelect (primary + subagents minus disabled, sorted).
+	multiSelectItems []string
+	// multiSelectChecked is parallel to multiSelectItems; true = selected.
+	multiSelectChecked []bool
+	// multiSelectCursor is the cursor row on ScreenAgentMultiSelect.
+	multiSelectCursor int
 	// backupCount is the backup retention value (0 = skip backups entirely).
 	backupCount int
 	// saveError carries a human-readable save/validation error for display.
@@ -211,6 +235,11 @@ func (m *Model) popScreen() {
 	if len(m.navigationStack) == 0 {
 		m.state = ScreenAgentList
 		return
+	}
+	if m.state == ScreenModelSelection &&
+		(m.fieldEditing == fieldEditingBulkAll || m.fieldEditing == fieldEditingBulkList) {
+		m.fieldEditing = ""
+		m.bulkTargets = nil
 	}
 	last := len(m.navigationStack) - 1
 	m.state = m.navigationStack[last]
@@ -335,6 +364,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.state == ScreenSaveConfirm {
 			return updateSaveConfirm(m, msg)
 		}
+		if m.state == ScreenAgentMultiSelect {
+			return updateAgentMultiSelect(m, msg)
+		}
 
 		// Printable q/s are commands only on non-input screens.
 		if msg.Type == tea.KeyRunes && len(msg.Runes) == 1 && msg.Runes[0] == 'q' {
@@ -398,6 +430,8 @@ func (m Model) View() string {
 		return viewFieldInput(m)
 	case ScreenSaveConfirm:
 		return viewSaveConfirm(m)
+	case ScreenAgentMultiSelect:
+		return viewAgentMultiSelect(m)
 	default:
 		return ErrorStyle.Render("unknown screen state")
 	}

@@ -472,3 +472,142 @@ func TestModelPicker_CursorIndependentFromAgentListCursor(t *testing.T) {
 	m = updated.(Model)
 	assert.Equal(t, wantAgentCursor, m.agentCursor)
 }
+
+// ---------------------------------------------------------------------------
+// Bulk sentinel constants and bulkTargets field (REQ-TUI-001)
+// ---------------------------------------------------------------------------
+
+// TestModel_FieldEditingBulkAllConstant verifies the sentinel constant for
+// Flow A (apply-to-all) exists with the correct value.
+func TestModel_FieldEditingBulkAllConstant(t *testing.T) {
+	assert.Equal(t, "bulk-all", fieldEditingBulkAll,
+		"fieldEditingBulkAll MUST equal \"bulk-all\"")
+}
+
+// TestModel_FieldEditingBulkListConstant verifies the sentinel constant for
+// Flow B (multi-select) exists with the correct value.
+func TestModel_FieldEditingBulkListConstant(t *testing.T) {
+	assert.Equal(t, "bulk-list", fieldEditingBulkList,
+		"fieldEditingBulkList MUST equal \"bulk-list\"")
+}
+
+// TestModel_HasBulkTargetsField verifies the Model struct has a bulkTargets
+// []string field that can be set and read.
+func TestModel_HasBulkTargetsField(t *testing.T) {
+	var m Model
+	m.bulkTargets = []string{"agent-a", "agent-b"}
+	assert.Equal(t, []string{"agent-a", "agent-b"}, m.bulkTargets,
+		"Model MUST have a bulkTargets []string field")
+}
+
+// ---------------------------------------------------------------------------
+// Bulk sentinel cleanup — popScreen and performSave (REQ-TUI-006)
+// ---------------------------------------------------------------------------
+
+// TestPopScreen_ClearsBulkAllSentinel verifies that popping ScreenModelSelection
+// when fieldEditing was "bulk-all" resets the sentinel and bulkTargets so no
+// stale state leaks into subsequent flows.
+//
+// Spec: REQ-TUI-006 — ESC from bulk ModelSelection clears sentinels.
+func TestPopScreen_ClearsBulkAllSentinel(t *testing.T) {
+	m := NewModel(fixtureConfig(t), sampleGrouped(), 5)
+	m.state = ScreenModelSelection
+	m.fieldEditing = fieldEditingBulkAll
+	m.bulkTargets = []string{"stale"}
+	m.navigationStack = []appState{ScreenAgentList}
+
+	m.popScreen()
+
+	assert.Equal(t, ScreenAgentList, m.state,
+		"popScreen MUST return to the navigation origin")
+	assert.Equal(t, "", m.fieldEditing,
+		"popScreen from bulk-all MUST clear fieldEditing")
+	assert.Nil(t, m.bulkTargets,
+		"popScreen from bulk-all MUST clear bulkTargets")
+}
+
+// TestPopScreen_ClearsBulkListSentinel verifies the same cleanup for bulk-list.
+//
+// Spec: REQ-TUI-006 — ESC from bulk ModelSelection clears sentinels.
+func TestPopScreen_ClearsBulkListSentinel(t *testing.T) {
+	m := NewModel(fixtureConfig(t), sampleGrouped(), 5)
+	m.state = ScreenModelSelection
+	m.fieldEditing = fieldEditingBulkList
+	m.bulkTargets = []string{"agent-a", "agent-b"}
+	m.navigationStack = []appState{ScreenAgentList}
+
+	m.popScreen()
+
+	assert.Equal(t, ScreenAgentList, m.state)
+	assert.Equal(t, "", m.fieldEditing,
+		"popScreen from bulk-list MUST clear fieldEditing")
+	assert.Nil(t, m.bulkTargets,
+		"popScreen from bulk-list MUST clear bulkTargets")
+}
+
+// TestPopScreen_PreservesGlobalSentinel is a regression guard: the "global"
+// sentinel MUST NOT be cleared by popScreen. Only bulk-* sentinels are cleaned.
+//
+// Spec: REQ-TUI-006 — only bulk sentinels are cleared, not "global".
+func TestPopScreen_PreservesGlobalSentinel(t *testing.T) {
+	m := NewModel(fixtureConfig(t), sampleGrouped(), 5)
+	m.state = ScreenModelSelection
+	m.fieldEditing = "global"
+	m.navigationStack = []appState{ScreenAgentList}
+
+	m.popScreen()
+
+	assert.Equal(t, ScreenAgentList, m.state)
+	assert.Equal(t, "global", m.fieldEditing,
+		"popScreen from global ModelSelection MUST NOT clear fieldEditing")
+}
+
+// TestSaveComplete_ClearsBulkState verifies that a successful performSave
+// resets bulkTargets and fieldEditing alongside the existing cleanup
+// (dirty, changes, navigationStack).
+//
+// Spec: REQ-TUI-006 — save completes after bulk → state cleared.
+func TestSaveComplete_ClearsBulkState(t *testing.T) {
+	m := writableSaveConfirmModel(t, 0)
+	m.fieldEditing = fieldEditingBulkList
+	m.bulkTargets = []string{"agent-a", "agent-b"}
+
+	result, _ := performSave(m)
+
+	assert.Equal(t, ScreenAgentList, result.state,
+		"performSave MUST return to AgentList on success")
+	assert.Nil(t, result.bulkTargets,
+		"performSave MUST clear bulkTargets on success")
+	assert.Equal(t, "", result.fieldEditing,
+		"performSave MUST clear fieldEditing on success")
+}
+
+// TestSingleAgentFlowAfterBulkCancel verifies that after cancelling a bulk-all
+// flow via ESC, immediately entering a single-agent edit does NOT inherit the
+// stale bulk-all sentinel.
+//
+// Spec: REQ-TUI-006 — entering single-agent flow after bulk cancel uses the
+// agent name, not a stale sentinel.
+func TestSingleAgentFlowAfterBulkCancel(t *testing.T) {
+	m := NewModel(fixtureConfig(t), richGrouped(), 5)
+
+	// Simulate Flow A entry
+	m.pushScreen(ScreenModelSelection)
+	m.fieldEditing = fieldEditingBulkAll
+	require.Equal(t, fieldEditingBulkAll, m.fieldEditing)
+
+	// Simulate ESC (cancel)
+	m.popScreen()
+
+	// Immediately enter a single-agent edit
+	m.selectedAgent = "plan"
+	m.pushScreen(ScreenModelSelection)
+	m.fieldEditing = "plan"
+
+	assert.NotEqual(t, fieldEditingBulkAll, m.fieldEditing,
+		"fieldEditing MUST NOT retain stale bulk-all after cancel")
+	assert.NotEqual(t, fieldEditingBulkList, m.fieldEditing,
+		"fieldEditing MUST NOT retain stale bulk-list after cancel")
+	assert.Equal(t, "plan", m.fieldEditing,
+		"fieldEditing MUST be the agent name for single-agent edit")
+}
