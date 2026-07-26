@@ -1,6 +1,6 @@
 // Package main is the CLI entry point for opencode-model-selector. It parses
 // flags using the stdlib flag package and dispatches to the appropriate mode
-// (interactive TUI, list-models, or list-agents).
+// (interactive TUI, list-models, list-agents, or apply-model).
 //
 // No business logic lives here — this file is pure flag parsing and dispatch
 // routing. The actual output functions (runListModels, runListAgents, runTUI)
@@ -34,6 +34,7 @@ const (
 	modeTUI        cliMode = "tui"
 	modeListModels cliMode = "list-models"
 	modeListAgents cliMode = "list-agents"
+	modeApplyModel cliMode = "apply-model"
 )
 
 // cliOptions holds the parsed CLI flag values and the resolved dispatch mode.
@@ -41,6 +42,8 @@ type cliOptions struct {
 	configPath  string
 	mode        cliMode
 	backupCount int
+	applyModel  string
+	agentsCSV   string
 }
 
 // parseFlags parses command-line arguments into cliOptions. It returns the
@@ -50,9 +53,7 @@ type cliOptions struct {
 // Output from the flag package is suppressed (io.Discard) so that parseFlags
 // is a pure function; run() handles any user-facing error messaging.
 //
-// Mode precedence (REQ-CMD-001): when multiple mode flags are set, list-models
-// takes priority over list-agents. When no mode flags are set, the default is
-// TUI.
+// Mode precedence (REQ-CMD-001): list-models > list-agents > apply-model > TUI.
 func parseFlags(args []string) (cliOptions, int) {
 	fs := flag.NewFlagSet("opencode-model-selector", flag.ContinueOnError)
 	fs.SetOutput(io.Discard) // pure function — run() handles user-facing output
@@ -64,18 +65,27 @@ func parseFlags(args []string) (cliOptions, int) {
 	fs.BoolVar(&listModels, "list-models", false, "List available models grouped by provider")
 	fs.BoolVar(&listAgents, "list-agents", false, "List agents with current field values")
 	fs.IntVar(&opts.backupCount, "backup-count", 5, "Number of backups to retain (0 to disable)")
+	fs.StringVar(&opts.applyModel, "apply-model", "", "Apply model to agents (requires --agents)")
+	fs.StringVar(&opts.agentsCSV, "agents", "", "Target agents: 'all' or comma-separated names")
 
 	if err := fs.Parse(args); err != nil {
 		return opts, 2
 	}
 
-	// Determine dispatch mode with precedence:
-	// list-models > list-agents > TUI (default).
+	if opts.applyModel != "" && opts.agentsCSV == "" {
+		return opts, 2
+	}
+	if opts.agentsCSV != "" && opts.applyModel == "" {
+		return opts, 2
+	}
+
 	switch {
 	case listModels:
 		opts.mode = modeListModels
 	case listAgents:
 		opts.mode = modeListAgents
+	case opts.applyModel != "":
+		opts.mode = modeApplyModel
 	default:
 		opts.mode = modeTUI
 	}
@@ -139,9 +149,13 @@ func run(args []string) int {
 		}
 
 	case modeListAgents:
-		// list-agents does NOT require opencode — it reads config only.
-		// Spec: REQ-CMD-004 — "list-agents works without opencode installed"
 		if err := runListAgents(cfg); err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			return 1
+		}
+
+	case modeApplyModel:
+		if err := runApplyModel(cfg, opts.applyModel, opts.agentsCSV, opts.backupCount); err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			return 1
 		}
@@ -176,6 +190,92 @@ func main() {
 }
 
 // --- Stubs (implemented in G3-T2 and G3-T3) ---
+
+// runApplyModel executes the CLI bulk model apply. It detects opencode, fetches
+// available models, and delegates to applyModelWithModels for the testable
+// business logic.
+//
+// Exit codes (returned as error-nil/non-nil by this function):
+//   - nil: success
+//   - non-nil: runtime error (opencode missing, invalid model, save failure)
+//
+// Spec: REQ-CLI-003..008
+func runApplyModel(cfg *config.Config, applyModel, agentsCSV string, backupCount int) error {
+	if _, err := opencode.Detect(); err != nil {
+		return fmt.Errorf("opencode CLI not found. Install it: https://opencode.ai")
+	}
+	models, err := opencode.GetModels()
+	if err != nil {
+		return fmt.Errorf("getting models: %w", err)
+	}
+	return applyModelWithModels(cfg, applyModel, agentsCSV, backupCount, models)
+}
+
+// applyModelWithModels is the testable core of runApplyModel. It accepts the
+// available models as a parameter so tests can exercise it without the opencode
+// binary.
+//
+// Flow:
+//  1. Parse agentsCSV: "all" → nil names; else split+trim CSV
+//  2. config.ApplyModelToAgents (validates model, applies, collects skips)
+//  3. If empty result set → "0 agents updated", return nil (no backup, no save)
+//  4. CreateBackup → cfg.Save() → CleanOldBackups (if backupCount > 0)
+//  5. Print applied/skipped summary to stdout
+//
+// Spec: REQ-CLI-003..008
+func applyModelWithModels(cfg *config.Config, applyModel, agentsCSV string, backupCount int, models []opencode.Model) error {
+	var names []string
+	if agentsCSV != "all" {
+		for _, n := range strings.Split(agentsCSV, ",") {
+			n = strings.TrimSpace(n)
+			if n != "" {
+				names = append(names, n)
+			}
+		}
+	}
+
+	applied, skipped, err := config.ApplyModelToAgents(cfg, applyModel, names, models)
+	if err != nil {
+		return err
+	}
+
+	if len(applied) == 0 && len(skipped) == 0 {
+		fmt.Println("0 agents updated")
+		return nil
+	}
+
+	if backupCount > 0 {
+		if _, err := config.CreateBackup(cfg.Path()); err != nil {
+			return fmt.Errorf("backup failed: %w", err)
+		}
+	}
+	if err := cfg.Save(); err != nil {
+		return fmt.Errorf("save failed: %w", err)
+	}
+	if backupCount > 0 {
+		_ = config.CleanOldBackups(cfg.Path(), backupCount)
+	}
+
+	fmt.Printf("Model %s applied to %d agent%s\n", applyModel, len(applied), pluralCLI(len(applied)))
+	for _, name := range applied {
+		fmt.Printf("  ✓ %s\n", name)
+	}
+	if len(skipped) > 0 {
+		fmt.Printf("Skipped %d agent%s (disabled or already up-to-date)\n", len(skipped), pluralCLI(len(skipped)))
+		for _, name := range skipped {
+			fmt.Printf("  - %s\n", name)
+		}
+	}
+	return nil
+}
+
+// pluralCLI returns "" for singular (1) or "s" for plural.
+func pluralCLI(n int) string {
+	if n == 1 {
+		return ""
+	}
+	return "s"
+}
 
 // runListModels prints all available models grouped by provider to stdout.
 //

@@ -828,3 +828,101 @@ func TestUpdateAgentDetail_EnterOnModel_InitializesFilterInput(t *testing.T) {
 	assert.Equal(t, 0, newM.modelCursor,
 		"cursor MUST be reset to 0 when entering model selection from detail")
 }
+
+// ---------------------------------------------------------------------------
+// Bulk-All — selectModelAtCursor with fieldEditing="bulk-all" (REQ-TUI-001, REQ-TUI-004)
+// ---------------------------------------------------------------------------
+
+// TestSelectModelAtCursor_BulkAll_AppliesToAllNonDisabled verifies that
+// selecting a model in bulk-all mode applies it to every non-system,
+// non-disabled agent in the config.
+//
+// Spec: REQ-TUI-001 (Flow A 'a' key), REQ-TUI-004 (RecordChange per target).
+func TestSelectModelAtCursor_BulkAll_AppliesToAllNonDisabled(t *testing.T) {
+	m := newModelSelectModel(t, "bulk-all", "")
+	targetModel := m.filteredModels[m.modelCursor].FullName
+	require.NotEmpty(t, targetModel)
+
+	result := selectModelAtCursor(m)
+
+	primary, subagents, _ := result.config.GetAgents()
+	for _, name := range append(primary, subagents...) {
+		if result.config.IsAgentDisabled(name) {
+			continue
+		}
+		val, ok := result.config.GetAgentField(name, "model")
+		require.True(t, ok, "non-disabled agent %q MUST have a model after bulk-all", name)
+		s, _ := val.(string)
+		assert.Equal(t, targetModel, s,
+			"agent %q MUST have model %q after bulk-all", name, targetModel)
+	}
+}
+
+// TestSelectModelAtCursor_BulkAll_RecordsChangePerTarget verifies that
+// bulk-all produces exactly one Change entry per mutated agent.
+//
+// Spec: REQ-TUI-004 — 3-agent bulk produces 3 Changes.
+func TestSelectModelAtCursor_BulkAll_RecordsChangePerTarget(t *testing.T) {
+	m := newModelSelectModel(t, "bulk-all", "")
+	targetModel := m.filteredModels[m.modelCursor].FullName
+
+	primary, subagents, _ := m.config.GetAgents()
+	expectedChanges := 0
+	for _, name := range append(primary, subagents...) {
+		if m.config.IsAgentDisabled(name) {
+			continue
+		}
+		if cur, ok := m.config.GetAgentField(name, "model"); ok {
+			if s, _ := cur.(string); s == targetModel {
+				continue
+			}
+		}
+		expectedChanges++
+	}
+	require.Greater(t, expectedChanges, 0, "fixture must have non-disabled agents")
+
+	result := selectModelAtCursor(m)
+
+	assert.Len(t, result.changes, expectedChanges,
+		"bulk-all MUST produce exactly one Change per non-disabled, non-idempotent agent")
+}
+
+// TestSelectModelAtCursor_BulkAll_SkipsDisabled verifies that disabled agents
+// are not mutated and do not appear in the changes list.
+//
+// Spec: REQ-TUI-004 — disabled agents produce no Change.
+func TestSelectModelAtCursor_BulkAll_SkipsDisabled(t *testing.T) {
+	m := newModelSelectModel(t, "bulk-all", "")
+	targetModel := m.filteredModels[m.modelCursor].FullName
+
+	result := selectModelAtCursor(m)
+
+	for _, ch := range result.changes {
+		assert.NotEqual(t, "build", ch.Target,
+			"disabled agent 'build' MUST NOT appear in changes")
+	}
+	val, ok := result.config.GetAgentField("build", "model")
+	if ok {
+		s, _ := val.(string)
+		assert.NotEqual(t, targetModel, s,
+			"disabled agent 'build' model MUST remain unchanged")
+	}
+}
+
+// TestSelectModelAtCursor_BulkAll_IdempotentNoSecondChange verifies that
+// an agent already on the target model produces no Change entry.
+//
+// Spec: REQ-TUI-004 — agent already on target → no Change (RecordChange coalescing).
+func TestSelectModelAtCursor_BulkAll_IdempotentNoSecondChange(t *testing.T) {
+	m := newModelSelectModel(t, "bulk-all", "")
+	targetModel := m.filteredModels[m.modelCursor].FullName
+
+	require.NoError(t, m.config.SetAgentField("code-reviewer", "model", targetModel))
+
+	result := selectModelAtCursor(m)
+
+	for _, ch := range result.changes {
+		assert.NotEqual(t, "code-reviewer", ch.Target,
+			"agent already on target model MUST NOT produce a Change")
+	}
+}

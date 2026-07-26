@@ -146,8 +146,8 @@ func viewAgentList(m Model) string {
 
 func agentListHelp(width int) string {
 	return renderResponsiveHelp(width,
-		"S Review & Save · Q Quit · Esc Quit/confirm",
-		"S Save · Q Quit · Esc Exit",
+		"Enter Edit · A Apply-all · M Multi · S Review & Save · Q Quit",
+		"Enter Edit · A All · M · S Save · Q Quit",
 	)
 }
 
@@ -390,6 +390,22 @@ func updateAgentList(m Model, msg tea.KeyMsg) (Model, tea.Cmd) {
 	}
 
 	switch {
+	// --- 'a': Flow A — apply model to ALL non-system, non-disabled agents ---
+	case msg.Type == tea.KeyRunes && len(msg.Runes) == 1 && msg.Runes[0] == 'a':
+		m.pushScreen(ScreenModelSelection)
+		m.fieldEditing = fieldEditingBulkAll
+		m.bulkTargets = nil
+		m.quitConfirm = false
+		initModelSelectionScreen(&m)
+		return m, nil
+
+	// --- 'm': Flow B — pick agents first, then model ---
+	case msg.Type == tea.KeyRunes && len(msg.Runes) == 1 && msg.Runes[0] == 'm':
+		initAgentMultiSelectScreen(&m)
+		m.pushScreen(ScreenAgentMultiSelect)
+		m.quitConfirm = false
+		return m, nil
+
 	// --- Quit (q or Ctrl+C) ---
 	// When dirty, show the confirmation overlay instead of quitting.
 	// When clean, quit immediately.

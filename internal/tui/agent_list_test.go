@@ -178,7 +178,7 @@ func TestViewAgentList_DirtyIndicatorNotShownWhenClean(t *testing.T) {
 func TestViewAgentList_HelpFooterPresent(t *testing.T) {
 	m := NewModel(fixtureConfig(t), sampleGrouped(), 5)
 	out := viewAgentList(m)
-	assert.Contains(t, out, "S Review & Save · Q Quit · Esc Quit/confirm")
+	assert.Contains(t, out, "S Review & Save · Q Quit")
 }
 
 // TestViewAgentList_ReturnsNonEmpty verifies a basic non-empty contract.

@@ -237,6 +237,8 @@ func performSave(m Model) (Model, tea.Cmd) {
 	// --- Success ---
 	m.dirty = false
 	m.changes = nil
+	m.bulkTargets = nil
+	m.fieldEditing = ""
 	m.saveError = ""
 	m.saveSuccess = true
 	m.state = ScreenAgentList
