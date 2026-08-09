@@ -39,6 +39,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/lleontor705/opencode-model-selector/internal/appname"
 	"github.com/lleontor705/opencode-model-selector/internal/config"
 	"github.com/lleontor705/opencode-model-selector/internal/opencode"
 	"github.com/lleontor705/opencode-model-selector/internal/tui"
@@ -127,7 +128,7 @@ func countBackups(t *testing.T, dir string) int {
 // to observe state from outside the tui package (state/cursor/dirty are
 // unexported), and it doubles as an end-to-end rendering check.
 const (
-	screenMarkerAgentList      = "opencode-model-selector" // viewAgentList title
+	screenMarkerAgentList      = appname.Name // viewAgentList header (also requires "Primary Agents")
 	screenMarkerAgentDetail    = "Agent: "                 // viewAgentDetail header
 	screenMarkerModelSelection = "Select Model"            // viewModelSelection title
 	screenMarkerFieldInput     = "Edit: "                  // viewFieldInput header
@@ -1153,7 +1154,7 @@ func projectRoot(t *testing.T) string {
 // returns its path. The binary is cleaned up automatically via t.TempDir().
 func buildBinary(t *testing.T) string {
 	t.Helper()
-	binaryPath := filepath.Join(t.TempDir(), "opencode-model-selector-test"+binaryExt())
+	binaryPath := filepath.Join(t.TempDir(), "ocs-test"+binaryExt())
 
 	cmd := exec.Command("go", "build", "-o", binaryPath, ".")
 	cmd.Dir = projectRoot(t)

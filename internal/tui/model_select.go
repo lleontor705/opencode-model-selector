@@ -7,7 +7,7 @@
 //
 // Visual layout:
 //
-//	╭─ opencode-model-selector ─────────────────────╮
+//	╭─ ocs ─────────────────────────────────────────╮
 //	│  Interactive model selector for OpenCode...   │
 //	╰───────────────────────────────────────────────╯
 //

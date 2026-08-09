@@ -1,5 +1,5 @@
 {
-  "name": "opencode-model-selector",
+  "name": "ocs",
   "version": "1.0.0",
   "description": "Go CLI tool for interactively selecting OpenCode models and editing agent configuration",
   "license": "MIT",

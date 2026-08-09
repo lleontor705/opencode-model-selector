@@ -66,19 +66,140 @@ func TestLoadConfig_PathAccessor(t *testing.T) {
 	assert.Equal(t, path, cfg.Path(), "Path() must return the path passed to LoadConfig")
 }
 
+// TestLoadConfig_JSONCEqualsJSON asserts that the opencode.jsonc fixture
+// (line comments, block comment, trailing commas) parses to the EXACT same
+// semantic structure as the opencode.json fixture. Comments and trailing
+// commas must not alter the resulting Config data — that is the whole point of
+// routing loads through hujson.Standardize.
+func TestLoadConfig_JSONCEqualsJSON(t *testing.T) {
+	jsonCfg, err := LoadConfig(fixturePath(t, "opencode.json"))
+	require.NoError(t, err)
+
+	jsoncCfg, err := LoadConfig(fixturePath(t, "opencode.jsonc"))
+	require.NoError(t, err)
+
+	// The .jsonc path must reflect the file it was loaded from.
+	assert.Equal(t, fixturePath(t, "opencode.jsonc"), jsoncCfg.Path(),
+		"Path() must reflect the .jsonc source")
+
+	// Deep equality over the full parsed maps guarantees no semantic drift:
+	// same agents, same MCP env keys, same permissions, same $schema.
+	assert.Equal(t, jsonCfg.Data(), jsoncCfg.Data(),
+		"opencode.jsonc must parse to the same data as opencode.json")
+}
+
 // ---------------------------------------------------------------------------
 // GetConfigPath
 // ---------------------------------------------------------------------------
 
-func TestGetConfigPath_DefaultPath(t *testing.T) {
-	got, err := GetConfigPath("")
-	require.NoError(t, err)
+// configDir returnS the opencode config directory under home. This mirrors
+// the layout GetConfigPath uses (home/.config/opencode) so table cases stay
+// readable.
+func configDir(home string) string {
+	return filepath.Join(home, ".config", "opencode")
+}
 
-	home, err := os.UserHomeDir()
-	require.NoError(t, err)
-	expected := filepath.Join(home, ".config", "opencode", "opencode.json")
+// setHomeEnv controls os.UserHomeDir() on BOTH unix (HOME) and windows
+// (USERPROFILE) by pointing them at the same temp directory. t.Setenv handles
+// restoration automatically at the end of the (sub)test, so no manual cleanup
+// is needed.
+//
+// This is what makes GetConfigPath hermetic: with both env vars pinned, the
+// real user home is never consulted, so the test is independent of whatever
+// opencode.json / opencode.jsonc the developer happens to have installed.
+func setHomeEnv(t *testing.T, home string) {
+	t.Helper()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+}
 
-	assert.Equal(t, expected, got)
+// writeCfgFile creates dir/.config/opencode/<name> and returns its full path.
+func writeCfgFile(t *testing.T, home, name string) string {
+	t.Helper()
+	dir := configDir(home)
+	require.NoError(t, os.MkdirAll(dir, 0o755), "failed to create config dir")
+	p := filepath.Join(dir, name)
+	require.NoError(t, os.WriteFile(p, []byte("{}"), 0o600))
+	return p
+}
+
+// TestGetConfigPath_ProbeOrder verifies the jsonc>json precedence, the
+// default-create path when neither exists, and that an explicit override is
+// returned verbatim and is independent of HOME.
+//
+// It pins os.UserHomeDir() via HOME/USERPROFILE to a temp dir per case, so the
+// real user's ~/.config/opencode/ never influences the result.
+func TestGetConfigPath_ProbeOrder(t *testing.T) {
+	cases := []struct {
+		name      string
+		setup     func(t *testing.T, home string)
+		override  string
+		wantFname string // expected filepath.Base of result when wantPath == ""
+		wantPath  string // exact expected path (overrides wantFname when set)
+	}{
+		{
+			// Neither file exists → return the conventional default-create
+			// path (opencode.json) so first-time Save writes standard JSON.
+			name:      "neither_exists_defaults_to_json",
+			setup:     func(t *testing.T, home string) {},
+			wantFname: "opencode.json",
+		},
+		{
+			// Only .json exists → return it.
+			name: "json_only",
+			setup: func(t *testing.T, home string) {
+				writeCfgFile(t, home, "opencode.json")
+			},
+			wantFname: "opencode.json",
+		},
+		{
+			// Only .jsonc exists → return it.
+			name: "jsonc_only",
+			setup: func(t *testing.T, home string) {
+				writeCfgFile(t, home, "opencode.jsonc")
+			},
+			wantFname: "opencode.jsonc",
+		},
+		{
+			// BOTH exist → jsonc wins (precedence).
+			name: "both_exist_jsonc_wins",
+			setup: func(t *testing.T, home string) {
+				writeCfgFile(t, home, "opencode.json")
+				writeCfgFile(t, home, "opencode.jsonc")
+			},
+			wantFname: "opencode.jsonc",
+		},
+		{
+			// Explicit override is returned verbatim, ignoring HOME entirely.
+			name:      "override_returned_verbatim",
+			setup:     func(t *testing.T, home string) {},
+			override:  filepath.Join(t.TempDir(), "custom.jsonc"),
+			wantFname: "",
+			wantPath:  "", // set below per-case (override path is dynamic)
+		},
+	}
+
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			home := t.TempDir()
+			setHomeEnv(t, home)
+			if tc.setup != nil {
+				tc.setup(t, home)
+			}
+
+			got, err := GetConfigPath(tc.override)
+			require.NoError(t, err)
+
+			if tc.override != "" {
+				assert.Equal(t, tc.override, got,
+					"override must be returned verbatim")
+				return
+			}
+			want := filepath.Join(configDir(home), tc.wantFname)
+			assert.Equal(t, want, got)
+		})
+	}
 }
 
 func TestGetConfigPath_OverridePath(t *testing.T) {

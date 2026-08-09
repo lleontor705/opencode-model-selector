@@ -71,7 +71,7 @@
 
   <!-- Wordmark -->
   <text x="240" y="125" font-family="'SF Mono', 'Cascadia Code', 'JetBrains Mono', 'Fira Code', monospace" font-size="42" font-weight="bold" letter-spacing="2">
-    <tspan fill="url(#neural)">opencode-model-selector</tspan>
+    <tspan fill="url(#neural)">ocs</tspan>
   </text>
 
   <!-- Tagline -->

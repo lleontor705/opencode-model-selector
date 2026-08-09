@@ -6,7 +6,7 @@
 //
 // Visual layout (top → bottom):
 //
-//	╭─ opencode-model-selector ─────────────────────╮
+//	╭─ ocs ─────────────────────────────────────────╮
 //	│  Interactive model selector for OpenCode...   │
 //	╰───────────────────────────────────────────────╯
 //
@@ -89,7 +89,7 @@ func selectableItems(m Model) []string {
 
 // viewAgentList renders the agent list screen. The layout is:
 //
-//	[dirty] opencode-model-selector
+//	[dirty] ocs
 //
 //	[Global Default Model]
 //	  model: <value or (none)>

@@ -1,5 +1,5 @@
 <p align="center">
-  <img alt="opencode-model-selector Logo" src="./assets/opencode-model-selector-logo.svg" width="800" />
+  <img alt="ocs Logo" src="./assets/opencode-model-selector-logo.svg" width="800" />
 </p>
 
 <p align="center">
@@ -21,11 +21,11 @@
 
 ---
 
-> **opencode-model-selector** `/ˈoʊ.pən.kəʊd ˈmɒd.əl sɪˈlɛk.tə/` — A Go CLI tool for interactively selecting models and editing OpenCode agent configuration via a Bubbletea TUI.
+> **ocs** — A Go CLI tool for interactively selecting models and editing OpenCode agent configuration via a Bubbletea TUI. (The repo/module is `opencode-model-selector`; the binary is `ocs`.)
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                    opencode-model-selector                   │
+│                           ocs                                 │
 ├─────────────────────────────────────────────────────────────┤
 │                                                              │
 │  opencode models ──► Parse ──► Group by Provider             │
@@ -54,7 +54,7 @@
 
 Manually editing `opencode.json` to assign models to agents is error-prone. You don't know which models are available without running `opencode models` separately, and one wrong edit can corrupt the JSON or leak API keys.
 
-| | Manual JSON Editing | opencode-model-selector |
+| | Manual JSON Editing | ocs |
 |---|:---:|:---:|
 | See available models | ❌ Run `opencode models` separately | ✅ Listed in TUI with fuzzy filter |
 | Model validation | ❌ No validation | ✅ Strict validation against `opencode models` |
@@ -68,11 +68,12 @@ Manually editing `opencode.json` to assign models to agents is error-prone. You 
 ```bash
 # Install
 go install github.com/lleontor705/opencode-model-selector@latest
+# The installed binary is named `ocs`.
 
 # Run
-opencode-model-selector                # interactive TUI
-opencode-model-selector --list-models  # list available models
-opencode-model-selector --list-agents  # list agents and config
+ocs                # interactive TUI
+ocs --list-models  # list available models
+ocs --list-agents  # list agents and config
 ```
 
 **Prerequisites:** [OpenCode CLI](https://opencode.ai) on your `$PATH`, Go 1.26+.
@@ -84,27 +85,30 @@ For detailed installation instructions, see [INSTALLATION.md](./docs/INSTALLATIO
 - **Model Detection** — automatically discovers all available models from `opencode models`
 - **Interactive TUI** — Bubbletea-based terminal UI with fuzzy-filter model selection
 - **6 Editable Fields** — model, temperature, top_p, color, steps, and disable per agent
+- **JSONC Support** — loads `opencode.json` and `opencode.jsonc` (comments and trailing commas allowed on load)
 - **Backup & Restore** — automatic JSON backups before every write (configurable retention)
 - **Cross-Platform** — single Go binary for Linux, macOS, and Windows (no runtime deps)
 - **CLI Flags** — non-interactive modes for scripting: `--list-models`, `--list-agents`
+
+> **Note on `.jsonc`:** comments are supported on load but are not preserved when the tool saves the config — it writes standard JSON.
 
 ## CLI Usage
 
 ```bash
 # Interactive TUI (default)
-opencode-model-selector
+ocs
 
-# Override config path
-opencode-model-selector --config /path/to/opencode.json
+# Override config path (opencode.json or opencode.jsonc)
+ocs --config /path/to/opencode.json
 
 # List available models grouped by provider
-opencode-model-selector --list-models
+ocs --list-models
 
 # List agents with current field values
-opencode-model-selector --list-agents
+ocs --list-agents
 
 # Control backup retention (0 to disable)
-opencode-model-selector --backup-count 10
+ocs --backup-count 10
 ```
 
 | Flag | Default | Description |

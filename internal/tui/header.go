@@ -7,7 +7,7 @@
 //
 // Layout (terminal, top to bottom):
 //
-//	╭─ opencode-model-selector ─────────────────────╮
+//	╭─ ocs ─────────────────────────────────────────╮
 //	│  Interactive model selector for OpenCode...   │
 //	╰───────────────────────────────────────────────╯
 //
@@ -22,13 +22,13 @@ import (
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
+
+	"github.com/lleontor705/opencode-model-selector/internal/appname"
 )
 
 // App constants — surfaced here so the header, status bar, and any future
 // "About" dialog share the same source of truth.
 const (
-	// appName is the public name of the tool, used in the header banner.
-	appName = "opencode-model-selector"
 	// appTagline is the one-line description under the title.
 	appTagline = "Interactive model selector for OpenCode agents"
 	// appVersion is the runtime version. It can be overridden at link time
@@ -59,14 +59,15 @@ func renderResponsiveHelp(width int, full, compact string) string {
 //
 // The output does NOT include a trailing newline — callers add one if needed.
 func renderHeader(m Model, screenTitle string) string {
-	// Build the title chip: "opencode-model-selector" with optional dirty marker.
-	// The dirty marker is the literal '*' so existing tests + muscle memory
-	// continue to work; it is colored orange via DirtyIndicator style.
+	// Build the title chip: the program name (appname.Name) with optional
+	// dirty marker. The dirty marker is the literal '*' so existing tests +
+	// muscle memory continue to work; it is colored orange via DirtyIndicator
+	// style.
 	var titleParts []string
 	if m.dirty {
 		titleParts = append(titleParts, DirtyIndicator.Render("*"))
 	}
-	titleParts = append(titleParts, TitleStyle.Render(appName), HeaderTaglineStyle.Render(appVersion))
+	titleParts = append(titleParts, TitleStyle.Render(appname.Name), HeaderTaglineStyle.Render(appVersion))
 
 	if screenTitle != "" {
 		titleParts = append(titleParts,
