@@ -19,6 +19,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
+	"github.com/lleontor705/opencode-model-selector/internal/appname"
 	"github.com/lleontor705/opencode-model-selector/internal/config"
 	"github.com/lleontor705/opencode-model-selector/internal/opencode"
 )
@@ -412,7 +413,7 @@ func (m Model) View() string {
 	// Error-tolerant path: if no config was supplied, surface an error
 	// message instead of dereferencing a nil pointer in any screen handler.
 	if m.config == nil {
-		return ErrorStyle.Render("opencode-model-selector: no config loaded")
+		return ErrorStyle.Render(appname.Name + ": no config loaded")
 	}
 	if m.width > 0 && m.height > 0 &&
 		(m.width < minTerminalWidth || m.height < minTerminalHeight) {

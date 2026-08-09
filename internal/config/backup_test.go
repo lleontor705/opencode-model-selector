@@ -77,6 +77,69 @@ func TestCreateBackup_SourceMissingReturnsError(t *testing.T) {
 	assert.ErrorIs(t, err, ErrBackupFailed)
 }
 
+// TestCreateBackup_JSONCDerivesBasename verifies that a config path ending in
+// opencode.jsonc produces backups named opencode.jsonc.backup.* (NOT
+// opencode.json.backup.*). The backup basename — INCLUDING extension — is
+// derived dynamically from the config path so .json and .jsonc backup sets
+// never collide.
+func TestCreateBackup_JSONCDerivesBasename(t *testing.T) {
+	dir := t.TempDir()
+	srcPath := filepath.Join(dir, "opencode.jsonc")
+	original := []byte(`{"$schema":"test","agent":{}}`)
+	require.NoError(t, os.WriteFile(srcPath, original, 0o600))
+
+	backupPath, err := CreateBackup(srcPath)
+	require.NoError(t, err)
+
+	base := filepath.Base(backupPath)
+	assert.True(t, strings.HasPrefix(base, "opencode.jsonc.backup."),
+		"jsonc backup name must start with opencode.jsonc.backup., got %q", base)
+	assert.False(t, strings.HasPrefix(base, "opencode.json.backup."),
+		"jsonc backup must NOT collide with the .json backup namespace, got %q", base)
+
+	// Timestamp suffix must still parse as YYYYMMDD-HHMMSS.
+	suffix := strings.TrimPrefix(base, "opencode.jsonc.backup.")
+	_, parseErr := time.Parse("20060102-150405", suffix)
+	assert.NoError(t, parseErr, "jsonc backup suffix must be YYYYMMDD-HHMMSS, got %q", suffix)
+
+	// Content must be a byte-for-byte copy of the source.
+	content, err := os.ReadFile(backupPath)
+	require.NoError(t, err)
+	assert.Equal(t, original, content)
+}
+
+// TestCleanOldBackups_JSONCGlobScope verifies that CleanOldBackups, when given
+// a .jsonc config path, only touches .jsonc backups and leaves any .json
+// backups (different namespace) untouched. This proves the cleanup glob is
+// derived from the SAME dynamic basename as CreateBackup.
+func TestCleanOldBackups_JSONCGlobScope(t *testing.T) {
+	dir := t.TempDir()
+	srcPath := filepath.Join(dir, "opencode.jsonc")
+	require.NoError(t, os.WriteFile(srcPath, []byte(`{}`), 0o600))
+
+	// Seed 3 jsonc backups (subject to cleanup) + 2 json backups (must be left
+	// alone because they belong to a different basename namespace).
+	for i := 0; i < 3; i++ {
+		name := filepath.Join(dir, "opencode.jsonc.backup."+fmtTimestamp(i))
+		require.NoError(t, os.WriteFile(name, []byte(`{}`), 0o600))
+	}
+	for i := 0; i < 2; i++ {
+		name := filepath.Join(dir, "opencode.json.backup."+fmtTimestamp(i))
+		require.NoError(t, os.WriteFile(name, []byte(`{}`), 0o600))
+	}
+
+	// Keep only the most recent jsonc backup.
+	require.NoError(t, CleanOldBackups(srcPath, 1))
+
+	jsoncRemaining := countBackupsByName(t, dir, "opencode.jsonc.backup.")
+	jsonRemaining := countBackupsByName(t, dir, "opencode.json.backup.")
+
+	assert.Equal(t, 1, jsoncRemaining,
+		"jsonc cleanup must keep exactly 1 jsonc backup when keep=1 and 3 exist")
+	assert.Equal(t, 2, jsonRemaining,
+		"json backups MUST be untouched by a jsonc cleanup run")
+}
+
 // ---------------------------------------------------------------------------
 // CleanOldBackups (REQ-CFG-010)
 // ---------------------------------------------------------------------------
@@ -165,14 +228,22 @@ func TestCleanOldBackups_FewerThanKeep(t *testing.T) {
 	assert.Equal(t, 2, remaining, "must not delete when count < keep")
 }
 
-// countBackups counts files in dir matching the backup glob pattern.
+// countBackups counts files in dir matching the legacy opencode.json backup
+// glob pattern.
 func countBackups(t *testing.T, dir string) int {
+	t.Helper()
+	return countBackupsByName(t, dir, "opencode.json.backup.")
+}
+
+// countBackupsByName counts files in dir whose name starts with prefix. Used
+// to assert that .json and .jsonc backup namespaces are kept separate.
+func countBackupsByName(t *testing.T, dir, prefix string) int {
 	t.Helper()
 	entries, err := os.ReadDir(dir)
 	require.NoError(t, err)
 	count := 0
 	for _, e := range entries {
-		if strings.HasPrefix(e.Name(), "opencode.json.backup.") {
+		if strings.HasPrefix(e.Name(), prefix) {
 			count++
 		}
 	}

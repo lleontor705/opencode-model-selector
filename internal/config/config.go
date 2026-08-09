@@ -12,6 +12,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+
+	"github.com/tailscale/hujson"
 )
 
 // Config wraps the parsed config data and the filesystem path it was loaded from
@@ -32,11 +34,32 @@ func (c *Config) Path() string {
 	return c.path
 }
 
-// LoadConfig reads the JSON config file at the given path and unmarshals it into
-// a Config wrapping map[string]interface{}.
+// decodeConfig parses JSON or JSONC (comments + trailing commas) into a map.
+// Valid JSON passes through unchanged, so existing .json configs are unaffected.
+//
+// Standardize strips JSONC-only syntax (// and /* */ comments, trailing commas)
+// and returns standard JSON, which is then unmarshalled into a generic map so
+// all unknown/future fields are preserved exactly as before.
+func decodeConfig(data []byte) (map[string]interface{}, error) {
+	standardized, err := hujson.Standardize(data)
+	if err != nil {
+		return nil, err
+	}
+	var m map[string]interface{}
+	if err := json.Unmarshal(standardized, &m); err != nil {
+		return nil, err
+	}
+	return m, nil
+}
+
+// LoadConfig reads the JSON/JSONC config file at the given path and unmarshals
+// it into a Config wrapping map[string]interface{}.
+//
+// Both standard JSON (opencode.json) and JSON-with-comments (opencode.jsonc)
+// are accepted. Comments and trailing commas are tolerated on load.
 //
 // Returns ErrConfigNotFound (wrapping the path) when the file does not exist.
-// Returns a JSON parse error when the file exists but contains invalid JSON.
+// Returns a parse error when the file exists but contains invalid JSON/JSONC.
 // Error messages reference the path only, never config values (REQ-CFG-013).
 func LoadConfig(path string) (*Config, error) {
 	content, err := os.ReadFile(path)
@@ -47,8 +70,8 @@ func LoadConfig(path string) (*Config, error) {
 		return nil, fmt.Errorf("read config %s: %w", path, err)
 	}
 
-	var data map[string]interface{}
-	if err := json.Unmarshal(content, &data); err != nil {
+	data, err := decodeConfig(content)
+	if err != nil {
 		return nil, fmt.Errorf("parse config %s: %w", path, err)
 	}
 
@@ -86,8 +109,11 @@ func (c *Config) Save() error {
 // GetConfigPath resolves the config file path.
 //
 // If override is non-empty it is returned verbatim (flag or env override).
-// Otherwise the default path is constructed as
-// filepath.Join(os.UserHomeDir(), ".config", "opencode", "opencode.json").
+// Otherwise the default config directory
+// (filepath.Join(os.UserHomeDir(), ".config", "opencode")) is probed in
+// preference order: opencode.jsonc, then opencode.json. The first existing
+// file is returned. If neither exists, the conventional opencode.json path is
+// returned (so a first-time Save creates a standard JSON file).
 //
 // os.UserHomeDir() is used — NOT os.UserConfigDir() — because opencode uses an
 // XDG-style ".config/opencode/" path on ALL platforms, while os.UserConfigDir()
@@ -102,5 +128,16 @@ func GetConfigPath(override string) (string, error) {
 		return "", fmt.Errorf("get home directory: %w", err)
 	}
 
-	return filepath.Join(home, ".config", "opencode", "opencode.json"), nil
+	dir := filepath.Join(home, ".config", "opencode")
+	candidates := []string{
+		filepath.Join(dir, "opencode.jsonc"),
+		filepath.Join(dir, "opencode.json"),
+	}
+	for _, c := range candidates {
+		if _, err := os.Stat(c); err == nil {
+			return c, nil
+		}
+	}
+	// Default: create the conventional .json file on first save.
+	return candidates[1], nil
 }

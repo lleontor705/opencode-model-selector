@@ -2,7 +2,7 @@ version: 2
 
 builds:
   - main: .
-    binary: opencode-model-selector
+    binary: ocs
     env:
       - CGO_ENABLED=0
     goos:
@@ -22,7 +22,7 @@ archives:
       - goos: windows
         formats:
           - zip
-    name_template: "opencode-model-selector_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    name_template: "ocs_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
 
 checksum:
   name_template: "checksums.txt"

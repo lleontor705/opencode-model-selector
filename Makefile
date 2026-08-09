@@ -1,7 +1,7 @@
 .PHONY: build run test test-coverage lint fmt clean tidy install help
 
 # Binary name
-BINARY_NAME=opencode-model-selector
+BINARY_NAME=ocs
 BINARY_DIR=bin
 BINARY_PATH=$(BINARY_DIR)/$(BINARY_NAME)
 
@@ -24,7 +24,7 @@ all: build
 
 # Display help
 help:
-	@echo "opencode-model-selector - Interactive Model Selector for OpenCode Agents"
+	@echo "ocs - Interactive Model Selector for OpenCode Agents"
 	@echo ""
 	@echo "Usage: make [target]"
 	@echo ""

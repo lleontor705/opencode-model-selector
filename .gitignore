@@ -4,6 +4,9 @@
 *.dll
 *.so
 *.dylib
+# Renamed binary (ocs) plus the legacy name kept for backward compatibility.
+ocs
+ocs.exe
 opencode-model-selector
 
 # Test binary

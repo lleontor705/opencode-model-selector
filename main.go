@@ -22,6 +22,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
+	"github.com/lleontor705/opencode-model-selector/internal/appname"
 	"github.com/lleontor705/opencode-model-selector/internal/config"
 	"github.com/lleontor705/opencode-model-selector/internal/opencode"
 	"github.com/lleontor705/opencode-model-selector/internal/tui"
@@ -55,7 +56,7 @@ type cliOptions struct {
 //
 // Mode precedence (REQ-CMD-001): list-models > list-agents > apply-model > TUI.
 func parseFlags(args []string) (cliOptions, int) {
-	fs := flag.NewFlagSet("opencode-model-selector", flag.ContinueOnError)
+	fs := flag.NewFlagSet(appname.Name, flag.ContinueOnError)
 	fs.SetOutput(io.Discard) // pure function — run() handles user-facing output
 
 	var opts cliOptions

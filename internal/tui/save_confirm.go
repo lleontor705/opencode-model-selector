@@ -80,13 +80,14 @@ func saveReviewHelp(width int) string {
 }
 
 func saveReviewHeader(m Model) string {
+	base := filepath.Base(m.config.Path())
 	parts := []string{
 		TitleStyle.Render("Review changes"),
-		"Save changes to opencode.json?",
+		"Save changes to " + base + "?",
 		"Config: " + m.config.Path(),
 	}
 	if m.backupCount > 0 {
-		backupPath := filepath.Join(filepath.Dir(m.config.Path()), "opencode.json.backup.YYYYMMDD-HHMMSS")
+		backupPath := filepath.Join(filepath.Dir(m.config.Path()), base+".backup.YYYYMMDD-HHMMSS")
 		parts = append(parts,
 			"Backup: "+backupPath,
 			"Retention: keep "+strconv.Itoa(m.backupCount)+" backups",
