@@ -1,6 +1,9 @@
 package config
 
-import "fmt"
+import (
+	"fmt"
+	"sort"
+)
 
 // systemAgents is the set of agent names reserved for opencode's internal use.
 // These are excluded from user-facing agent listings (GetAgents).
@@ -78,39 +81,50 @@ func (c *Config) SetAgentField(agentName, fieldName string, value interface{}) e
 }
 
 // GetAgents returns all agent names grouped by mode: primary, subagents, and
-// disabled. System agents are excluded from every slice. An agent with
-// disable:true appears in the disabled slice AND in its mode slice (primary or
-// subagent), so callers can filter disabled agents out of either group
-// (REQ-CFG-008).
+// disabled. System agents are excluded from every slice.
+//
+// The lists now include MARKDOWN agents discovered in the global
+// (~/.config/opencode/agents/*.md) and project (<cwd>/.opencode/agents/*.md)
+// layers, merged per-field with the inline-JSON agents (decision #5: JSON >
+// project md > global md). An agent with mode "all" (the markdown default) is
+// not placed in either the primary or subagent slice. A markdown-only agent
+// with disable semantics is still governed by the inline-JSON "disable" flag
+// only (markdown has no disable field), so pure-markdown agents are never
+// disabled.
+//
+// The returned slices are sorted alphabetically for DETERMINISTIC order.
+//
+// Markdown agents are READ-ONLY in v1: Save (config.go) writes the inline-JSON
+// config only and never touches .md files. GetAgentField/GetGlobalModel/
+// decodeConfig/LoadConfig/GetConfigPath behavior for pure-JSON configs is
+// unchanged (REGRESS-001).
 func (c *Config) GetAgents() (primary, subagents, disabled []string) {
-	agents := c.agentMap()
-	if agents == nil {
-		return
+	inlineJSON := c.agentMap()
+	if inlineJSON == nil {
+		inlineJSON = map[string]interface{}{}
 	}
 
-	for name, raw := range agents {
+	globalMD, projectMD := DiscoverMarkdownAgents(DefaultProjectAgentsDir())
+	merged := MergeAgents(globalMD, projectMD, inlineJSON)
+
+	for name, m := range merged {
 		if IsSystemAgent(name) {
 			continue
 		}
-		agent, ok := raw.(map[string]interface{})
-		if !ok {
-			continue
-		}
-
-		mode := getModeString(agent)
-		isDisabled := getBoolField(agent, "disable")
-
-		switch mode {
+		switch m.Mode() {
 		case "primary":
 			primary = append(primary, name)
 		case "subagent":
 			subagents = append(subagents, name)
 		}
-
-		if isDisabled {
+		if m.Disabled() {
 			disabled = append(disabled, name)
 		}
 	}
+
+	sort.Strings(primary)
+	sort.Strings(subagents)
+	sort.Strings(disabled)
 	return
 }
 

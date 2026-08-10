@@ -23,8 +23,15 @@ import (
 // fixtureConfig loads the sanitized opencode.json fixture from the repo's
 // test/fixtures directory. The fixture contains 14 agents (3 system, 2 primary,
 // 9 subagents), with `build` disabled and `parallel-dispatch` hidden.
+//
+// It isolates $HOME (HOME + USERPROFILE) to an empty temp dir so the host's
+// global markdown agents do not leak into GetAgents (markdown discovery is
+// HOME-based); TUI tests that DO want markdown fixtures set up their own HOME.
 func fixtureConfig(t *testing.T) *config.Config {
 	t.Helper()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 	p := filepath.Join("..", "..", "test", "fixtures", "opencode.json")
 	abs, err := filepath.Abs(p)
 	require.NoError(t, err, "failed to resolve fixture path")

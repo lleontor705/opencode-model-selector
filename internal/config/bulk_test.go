@@ -29,8 +29,13 @@ func bulkFixtureModels() []opencode.Model {
 
 // newBulkConfig builds a minimal Config with the given agents.
 // Each agent map is the raw "agent" section value for one agent.
+//
+// It isolates $HOME (HOME + USERPROFILE) to an empty temp dir so the host's
+// global markdown agents do not leak into GetAgents during these pure-JSON
+// bulk-apply tests (markdown discovery is HOME-based).
 func newBulkConfig(t *testing.T, agents map[string]map[string]interface{}) *Config {
 	t.Helper()
+	setHomeEnv(t, t.TempDir())
 	agentSection := make(map[string]interface{}, len(agents))
 	for name, fields := range agents {
 		agentSection[name] = fields

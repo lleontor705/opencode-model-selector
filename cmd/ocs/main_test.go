@@ -908,8 +908,15 @@ func mockModels() []opencode.Model {
 
 // makeEmptyConfig creates a config with ONLY system agents (no targetable
 // agents), used for the empty-target-set test.
+//
+// It isolates $HOME (HOME + USERPROFILE) to an empty temp dir so the host's
+// global markdown agents do not appear as targetable agents via GetAgents
+// (markdown discovery is HOME-based).
 func makeEmptyConfig(t *testing.T) *config.Config {
 	t.Helper()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 	tmpDir := t.TempDir()
 	dst := filepath.Join(tmpDir, "opencode.json")
 	content := `{
