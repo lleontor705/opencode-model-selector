@@ -77,18 +77,18 @@ func printUsage(w io.Writer, fs *flag.FlagSet) {
 }
 
 // parseFlags parses command-line arguments into cliOptions. It returns the
-// parsed options and an exit code: 0 for success, 2 for flag/usage errors
-// (the standard convention for CLI usage errors).
+// parsed options and an exit code: 0 for success or -h/--help, 2 for flag/usage
+// errors (the standard convention for CLI usage errors).
 //
 // The flag package's own error output is suppressed (io.Discard) so parseFlags
 // stays pure on the success path; a custom Usage banner (program name "ocs",
-// listing --version) is shown on flag errors and -h/-help via printUsage.
+// listing --version) is shown on -h/--help (stdout, exit 0) and on flag errors
+// (stderr, exit 2) via printUsage.
 //
 // Mode precedence (REQ-CMD-001): list-models > list-agents > apply-model > TUI.
 func parseFlags(args []string) (cliOptions, int) {
 	fs := flag.NewFlagSet(appname.Name, flag.ContinueOnError)
 	fs.SetOutput(io.Discard) // suppress internal flag-package error chatter
-	fs.Usage = func() { printUsage(os.Stderr, fs) }
 
 	var opts cliOptions
 	var listModels, listAgents bool
@@ -101,7 +101,23 @@ func parseFlags(args []string) (cliOptions, int) {
 	fs.StringVar(&opts.agentsCSV, "agents", "", "Target agents: 'all' or comma-separated names")
 	fs.BoolVar(&opts.showVersion, "version", false, "Print version and exit")
 
-	if err := fs.Parse(args); err != nil {
+	// -h/--help: print the banner to stdout and signal exit 0. Genuine flag
+	// errors print the banner to stderr and exit 2. The Usage callback inspects
+	// the parse result via a closure variable to pick the right stream.
+	var parseErr error
+	fs.Usage = func() {
+		if errors.Is(parseErr, flag.ErrHelp) {
+			printUsage(os.Stdout, fs)
+		} else {
+			printUsage(os.Stderr, fs)
+		}
+	}
+
+	parseErr = fs.Parse(args)
+	if parseErr != nil {
+		if errors.Is(parseErr, flag.ErrHelp) {
+			return opts, 0 // help is not an error
+		}
 		return opts, 2
 	}
 

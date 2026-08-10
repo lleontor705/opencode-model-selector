@@ -168,6 +168,24 @@ func TestRun_FlagError_ReturnsExit2(t *testing.T) {
 	assert.Equal(t, 2, code, "run should return 2 for invalid flags")
 }
 
+// TestParseFlags_HelpExits0 verifies that -h/--help is treated as a successful
+// usage request (exit 0), while an unknown flag is still a usage error (exit 2).
+// The help banner is written to stdout; genuine flag errors go to stderr.
+func TestParseFlags_HelpExits0(t *testing.T) {
+	t.Run("long --help", func(t *testing.T) {
+		_, code := parseFlags([]string{"--help"})
+		assert.Equal(t, 0, code, "--help must exit 0 (usage request, not an error)")
+	})
+	t.Run("short -h", func(t *testing.T) {
+		_, code := parseFlags([]string{"-h"})
+		assert.Equal(t, 0, code, "-h must exit 0 (usage request, not an error)")
+	})
+	t.Run("unknown flag still exits 2", func(t *testing.T) {
+		_, code := parseFlags([]string{"--no-such-flag"})
+		assert.Equal(t, 2, code, "unknown flag must remain a usage error (exit 2)")
+	})
+}
+
 // ---------------------------------------------------------------------------
 // Test helpers for formatModels / formatAgents tests
 // ---------------------------------------------------------------------------
