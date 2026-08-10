@@ -99,15 +99,7 @@ func (c *Config) SetAgentField(agentName, fieldName string, value interface{}) e
 // decodeConfig/LoadConfig/GetConfigPath behavior for pure-JSON configs is
 // unchanged (REGRESS-001).
 func (c *Config) GetAgents() (primary, subagents, disabled []string) {
-	inlineJSON := c.agentMap()
-	if inlineJSON == nil {
-		inlineJSON = map[string]interface{}{}
-	}
-
-	globalMD, projectMD := DiscoverMarkdownAgents(DefaultProjectAgentsDir())
-	merged := MergeAgents(globalMD, projectMD, inlineJSON)
-
-	for name, m := range merged {
+	for name, m := range c.mergedAgents() {
 		if IsSystemAgent(name) {
 			continue
 		}
@@ -126,6 +118,26 @@ func (c *Config) GetAgents() (primary, subagents, disabled []string) {
 	sort.Strings(subagents)
 	sort.Strings(disabled)
 	return
+}
+
+// mergedAgents is the shared core of GetAgents and MergedAgents: it discovers
+// the markdown layers (global + project) and merges them with the inline-JSON
+// agents into a unified map keyed by agent name.
+func (c *Config) mergedAgents() map[string]*MergedAgent {
+	inlineJSON := c.agentMap()
+	if inlineJSON == nil {
+		inlineJSON = map[string]interface{}{}
+	}
+	globalMD, projectMD := DiscoverMarkdownAgents(DefaultProjectAgentsDir())
+	return MergeAgents(globalMD, projectMD, inlineJSON)
+}
+
+// MergedAgents returns the merged markdown + inline-JSON agent representation
+// keyed by agent name (decision #5: JSON > project md > global md). The TUI
+// uses this to identify markdown-only (non-editable) agents via MergedAgent.
+// MdOnly. Markdown agents are READ-ONLY in v1.
+func (c *Config) MergedAgents() map[string]*MergedAgent {
+	return c.mergedAgents()
 }
 
 // GetGlobalModel returns the top-level "model" key value. Returns ("", false)

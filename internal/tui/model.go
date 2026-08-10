@@ -120,6 +120,10 @@ type Model struct {
 	primaryAgents  []string
 	subagents      []string
 	disabledAgents []string
+	// mdOnlyAgents is the set of agent names that exist ONLY in markdown (no
+	// inline-JSON backing). They are non-editable in v1: ENTER on them does not
+	// open the editor, and edits always route to the JSON config.
+	mdOnlyAgents map[string]bool
 	// editableFields is the schema shown on the Agent Detail screen.
 	editableFields []string
 
@@ -222,9 +226,31 @@ func NewModel(cfg *config.Config, grouped map[string][]opencode.Model, backupCou
 		m.primaryAgents = primary
 		m.subagents = subagents
 		m.disabledAgents = disabled
+		m.mdOnlyAgents = computeMdOnly(cfg)
 	}
 
 	return m
+}
+
+// computeMdOnly returns the set of agent names that are markdown-only (no
+// inline-JSON backing), derived from the config's merged agent view.
+func computeMdOnly(cfg *config.Config) map[string]bool {
+	out := map[string]bool{}
+	if cfg == nil {
+		return out
+	}
+	for name, merged := range cfg.MergedAgents() {
+		if merged.MdOnly {
+			out[name] = true
+		}
+	}
+	return out
+}
+
+// IsMarkdownOnly reports whether name is a markdown-only agent (no inline-JSON
+// backing). Such agents are display-only / non-editable in v1.
+func (m Model) IsMarkdownOnly(name string) bool {
+	return m.mdOnlyAgents[name]
 }
 
 func (m *Model) pushScreen(next appState) {

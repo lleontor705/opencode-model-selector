@@ -9,6 +9,7 @@
 package tui
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -617,4 +618,94 @@ func TestSingleAgentFlowAfterBulkCancel(t *testing.T) {
 		"fieldEditing MUST NOT retain stale bulk-list after cancel")
 	assert.Equal(t, "plan", m.fieldEditing,
 		"fieldEditing MUST be the agent name for single-agent edit")
+}
+
+// ---------------------------------------------------------------------------
+// Markdown agent integration (T-B6)
+//
+// The TUI consumes cfg.GetAgents() which now includes merged markdown agents.
+// Markdown-only agents (no inline-JSON backing) appear in the list but are
+// NON-EDITABLE: ENTER on them does not open the Agent Detail editor, and edits
+// always route to the inline-JSON config only (markdown is READ-ONLY in v1).
+// ---------------------------------------------------------------------------
+
+// loadFixtureWithMD loads the JSON fixture config while pointing $HOME at a
+// temp dir whose ~/.config/opencode/agents/ contains the supplied .md files.
+// files maps file name -> content. The fixture's own JSON agents are unchanged.
+func loadFixtureWithMD(t *testing.T, files map[string]string) *config.Config {
+	t.Helper()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	if len(files) > 0 {
+		gdir := filepath.Join(home, ".config", "opencode", "agents")
+		require.NoError(t, os.MkdirAll(gdir, 0o755))
+		for name, content := range files {
+			require.NoError(t, os.WriteFile(filepath.Join(gdir, name), []byte(content), 0o644))
+		}
+	}
+	abs, err := filepath.Abs(filepath.Join("..", "..", "test", "fixtures", "opencode.json"))
+	require.NoError(t, err)
+	cfg, err := config.LoadConfig(abs)
+	require.NoError(t, err)
+	return cfg
+}
+
+// TestTUI_ShowsMDAgents verifies that markdown agents appear in the TUI agent
+// lists (consumed from cfg.GetAgents) and are flagged md-only.
+func TestTUI_ShowsMDAgents(t *testing.T) {
+	cfg := loadFixtureWithMD(t, map[string]string{
+		"mdshown.md": "---\nmode: subagent\nmodel: m1\n---\nBody.\n",
+	})
+
+	m := NewModel(cfg, sampleGrouped(), 5)
+	assert.Contains(t, m.subagents, "mdshown",
+		"markdown agent must appear in the TUI subagent list")
+	assert.True(t, m.IsMarkdownOnly("mdshown"),
+		"md-only agent (no inline-JSON backing) must be flagged")
+	assert.False(t, m.IsMarkdownOnly("code-reviewer"),
+		"a JSON-backed agent must NOT be flagged md-only")
+}
+
+// TestTUI_MarkdownOnlyAgentNonEditable verifies that pressing ENTER on an
+// md-only agent does NOT open the Agent Detail editor (edits route to JSON
+// only; markdown is read-only).
+func TestTUI_MarkdownOnlyAgentNonEditable(t *testing.T) {
+	cfg := loadFixtureWithMD(t, map[string]string{
+		"locked.md": "---\nmode: primary\nmodel: m\n---\nLocked body.\n",
+	})
+
+	m := NewModel(cfg, sampleGrouped(), 5)
+	items := selectableItems(m)
+	cursor := indexOf(items, "locked")
+	require.GreaterOrEqual(t, cursor, 0,
+		"md-only agent 'locked' must be selectable in the list")
+	m.agentCursor = cursor
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	result := updated.(Model)
+	assert.Equal(t, ScreenAgentList, result.state,
+		"ENTER on an md-only agent must NOT transition away from the agent list")
+	assert.NotEqual(t, ScreenAgentDetail, result.state,
+		"ENTER on an md-only agent must NOT open the Agent Detail editor")
+
+	// Sanity: a JSON-backed agent still opens the editor on ENTER.
+	m2 := NewModel(cfg, sampleGrouped(), 5)
+	items2 := selectableItems(m2)
+	cursor2 := indexOf(items2, "code-reviewer")
+	require.GreaterOrEqual(t, cursor2, 0)
+	m2.agentCursor = cursor2
+	updated2, _ := m2.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	result2 := updated2.(Model)
+	assert.Equal(t, ScreenAgentDetail, result2.state,
+		"ENTER on a JSON-backed agent must still open the editor")
+}
+
+// TestEditableSchemaConsistency verifies the TUI editable field schema matches
+// the canonical 6-field set shared with cmd/ocs agentFields (model,
+// temperature, top_p, color, steps, disable), keeping the two in lockstep.
+func TestEditableSchemaConsistency(t *testing.T) {
+	expected := []string{"model", "temperature", "top_p", "color", "steps", "disable"}
+	assert.Equal(t, expected, editableFieldSchema,
+		"editableFieldSchema must match the canonical 6-field set (cmd/ocs agentFields)")
 }

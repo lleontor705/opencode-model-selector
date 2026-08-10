@@ -293,6 +293,10 @@ func renderAgentRow(m Model, name string, isDisabled, isSelected bool) string {
 
 	nameLine := prefix + name
 
+	// Append read-only indicator for markdown-only agents.
+	if m.IsMarkdownOnly(name) {
+		nameLine += " " + HelpStyle.Render("[MD]")
+	}
 	// Append indicator for hidden agents.
 	if m.config.IsAgentHidden(name) {
 		nameLine += " " + HelpStyle.Render("[H]")
@@ -321,6 +325,9 @@ func renderAgentRow(m Model, name string, isDisabled, isSelected bool) string {
 		return AgentDisabled.Render(content)
 	case isSelected:
 		return SelectedStyle.Render(content)
+	case m.IsMarkdownOnly(name):
+		// Markdown-only agents are read-only: render dimmed (greyed/locked).
+		return AgentHidden.Render(content)
 	case m.config.IsAgentHidden(name):
 		return AgentHidden.Render(content)
 	default:
@@ -461,11 +468,16 @@ func updateAgentList(m Model, msg tea.KeyMsg) (Model, tea.Cmd) {
 				m.fieldEditing = "global"
 				m.quitConfirm = false
 				initModelSelectionScreen(&m)
-			} else {
-				m.selectedAgent = item
-				m.pushScreen(ScreenAgentDetail)
-				m.quitConfirm = false
+		} else {
+			if m.IsMarkdownOnly(item) {
+				// Markdown-only agents are READ-ONLY in v1: do not open the
+				// editor. Edits always route to the inline-JSON config only.
+				return m, nil
 			}
+			m.selectedAgent = item
+			m.pushScreen(ScreenAgentDetail)
+			m.quitConfirm = false
+		}
 		}
 		return m, nil
 
