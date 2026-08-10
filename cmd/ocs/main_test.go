@@ -175,7 +175,7 @@ func TestRun_FlagError_ReturnsExit2(t *testing.T) {
 // loadTestModels loads the fixture models_output.txt for integration-style tests.
 func loadTestModels(t *testing.T) []opencode.Model {
 	t.Helper()
-	abs, err := filepath.Abs(filepath.Join("test", "fixtures", "models_output.txt"))
+	abs, err := filepath.Abs(filepath.Join("..", "..", "test", "fixtures", "models_output.txt"))
 	require.NoError(t, err, "fixture file must exist")
 	data, err := os.ReadFile(abs)
 	require.NoError(t, err, "failed to read fixture")
@@ -185,7 +185,7 @@ func loadTestModels(t *testing.T) []opencode.Model {
 // loadTestConfig loads the fixture opencode.json for integration-style tests.
 func loadTestConfig(t *testing.T) *config.Config {
 	t.Helper()
-	abs, err := filepath.Abs(filepath.Join("test", "fixtures", "opencode.json"))
+	abs, err := filepath.Abs(filepath.Join("..", "..", "test", "fixtures", "opencode.json"))
 	require.NoError(t, err, "failed to resolve fixture path")
 	cfg, err := config.LoadConfig(abs)
 	require.NoError(t, err)
@@ -613,7 +613,7 @@ func captureStdout(t *testing.T, fn func()) string {
 // fixture. Centralizes the path resolution for run() integration tests.
 func resolveFixtureConfigPath(t *testing.T) string {
 	t.Helper()
-	abs, err := filepath.Abs(filepath.Join("test", "fixtures", "opencode.json"))
+	abs, err := filepath.Abs(filepath.Join("..", "..", "test", "fixtures", "opencode.json"))
 	require.NoError(t, err)
 	return abs
 }
@@ -1116,4 +1116,109 @@ func TestRunApplyModel_StdoutSummary(t *testing.T) {
 	assert.Contains(t, stdout, "Model openai/gpt-5 applied to")
 	assert.Contains(t, stdout, "plan")
 	assert.Contains(t, stdout, "✓")
+}
+
+// ---------------------------------------------------------------------------
+// printVersion / --version flag (VERSION-001..003)
+//
+// printVersion is the testable core of --version. It writes the version string
+// (or "(dev)" fallback) to a writer and never touches config or the filesystem.
+// The --version flag short-circuits run() BEFORE any config resolution or side
+// effect, so it succeeds even when no valid config exists.
+// ---------------------------------------------------------------------------
+
+// withVersion temporarily sets the package-level version var for a test and
+// restores the previous value on cleanup. Tests must not leak version state.
+func withVersion(t *testing.T, v string) {
+	t.Helper()
+	prev := version
+	version = v
+	t.Cleanup(func() { version = prev })
+}
+
+// TestPrintVersion_DevFallback verifies that an empty version string prints
+// "(dev)" — the default for an unstamped local build.
+//
+// Spec: VERSION-002 — empty version → "(dev)".
+func TestPrintVersion_DevFallback(t *testing.T) {
+	withVersion(t, "")
+	var buf bytes.Buffer
+	printVersion(&buf)
+	assert.Equal(t, "(dev)\n", buf.String(),
+		"empty version must print the (dev) fallback")
+}
+
+// TestPrintVersion_SetValue verifies that a non-empty version string is printed
+// verbatim. This is the path exercised by goreleaser's -ldflags "-X main.version".
+//
+// Spec: VERSION-001 — stamped version printed as-is.
+func TestPrintVersion_SetValue(t *testing.T) {
+	withVersion(t, "1.2.3")
+	var buf bytes.Buffer
+	printVersion(&buf)
+	assert.Equal(t, "1.2.3\n", buf.String(),
+		"stamped version must be printed verbatim")
+}
+
+// TestVersion_FlagParsed verifies that --version is registered as a boolean
+// flag and parsed into cliOptions.showVersion.
+func TestVersion_FlagParsed(t *testing.T) {
+	opts, code := parseFlags([]string{"--version"})
+	require.Equal(t, 0, code)
+	assert.True(t, opts.showVersion, "--version must set showVersion=true")
+}
+
+// TestVersion_FlagNotSetByDefault verifies that omitting --version leaves
+// showVersion false so the normal dispatch proceeds.
+func TestVersion_FlagNotSetByDefault(t *testing.T) {
+	opts, code := parseFlags([]string{"--list-agents"})
+	require.Equal(t, 0, code)
+	assert.False(t, opts.showVersion, "default must not request version")
+}
+
+// TestVersion_ExitsBeforeConfigLoad verifies that --version short-circuits
+// run() BEFORE any config resolution or load. We point --config at a
+// nonexistent path: if config were loaded, run() would return exit code 1
+// ("Config not found"). A passing exit 0 with version output proves the
+// short-circuit.
+//
+// Spec: VERSION-003 — --version exits 0 before config load / side effects.
+func TestVersion_ExitsBeforeConfigLoad(t *testing.T) {
+	withVersion(t, "")
+
+	var code int
+	stdout := captureStdout(t, func() {
+		code = run([]string{"--version", "--config", "/nonexistent/opencode.json"})
+	})
+
+	require.Equal(t, 0, code,
+		"--version MUST exit 0 before config load even with a bogus config path")
+	assert.Equal(t, "(dev)\n", stdout,
+		"--version must print the version to stdout")
+}
+
+// TestVersion_ExitsBeforeConfigLoad_Stamped mirrors the above with a stamped
+// version to confirm the printed value flows through run().
+func TestVersion_ExitsBeforeConfigLoad_Stamped(t *testing.T) {
+	withVersion(t, "9.9.9-test")
+
+	var code int
+	stdout := captureStdout(t, func() {
+		code = run([]string{"--version", "--config", "/nonexistent/opencode.json"})
+	})
+
+	require.Equal(t, 0, code)
+	assert.Equal(t, "9.9.9-test\n", stdout)
+}
+
+// TestVersion_PrecedenceOverListAgents verifies that --version wins over
+// --list-agents: run() returns 0 with version output, never reaching the
+// list-agents dispatch (which would also need a config).
+func TestVersion_PrecedenceOverListAgents(t *testing.T) {
+	withVersion(t, "")
+	stdout := captureStdout(t, func() {
+		code := run([]string{"--version", "--list-agents", "--config", "/nonexistent/opencode.json"})
+		assert.Equal(t, 0, code)
+	})
+	assert.Equal(t, "(dev)\n", stdout)
 }

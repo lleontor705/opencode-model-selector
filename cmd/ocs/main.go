@@ -45,19 +45,50 @@ type cliOptions struct {
 	backupCount int
 	applyModel  string
 	agentsCSV   string
+	showVersion bool
+}
+
+// version is the stamped version string, injected at link time via
+// -ldflags "-X main.version=...". It is empty for local `go build`/`go install`
+// runs; printVersion renders the "(dev)" fallback in that case.
+var version string
+
+// printVersion writes the version (or "(dev)" when unstamped) to w, followed by
+// a newline. It performs no I/O beyond the write and touches no config, so it
+// is safe to call as the very first action of run().
+func printVersion(w io.Writer) {
+	if version == "" {
+		fmt.Fprintln(w, "(dev)")
+		return
+	}
+	fmt.Fprintln(w, version)
+}
+
+// printUsage writes the program usage banner to w. The program name is the
+// canonical "ocs" (appname.Name) and every registered flag — including
+// --version — is listed. Writing goes to w directly so the banner is visible
+// even though parseFlags suppresses the flag package's own output via
+// SetOutput(io.Discard).
+func printUsage(w io.Writer, fs *flag.FlagSet) {
+	fmt.Fprintf(w, "Usage: %s [flags]\n\n", appname.Name)
+	fmt.Fprintln(w, "Flags:")
+	fs.SetOutput(w)
+	fs.PrintDefaults()
 }
 
 // parseFlags parses command-line arguments into cliOptions. It returns the
 // parsed options and an exit code: 0 for success, 2 for flag/usage errors
 // (the standard convention for CLI usage errors).
 //
-// Output from the flag package is suppressed (io.Discard) so that parseFlags
-// is a pure function; run() handles any user-facing error messaging.
+// The flag package's own error output is suppressed (io.Discard) so parseFlags
+// stays pure on the success path; a custom Usage banner (program name "ocs",
+// listing --version) is shown on flag errors and -h/-help via printUsage.
 //
 // Mode precedence (REQ-CMD-001): list-models > list-agents > apply-model > TUI.
 func parseFlags(args []string) (cliOptions, int) {
 	fs := flag.NewFlagSet(appname.Name, flag.ContinueOnError)
-	fs.SetOutput(io.Discard) // pure function — run() handles user-facing output
+	fs.SetOutput(io.Discard) // suppress internal flag-package error chatter
+	fs.Usage = func() { printUsage(os.Stderr, fs) }
 
 	var opts cliOptions
 	var listModels, listAgents bool
@@ -68,6 +99,7 @@ func parseFlags(args []string) (cliOptions, int) {
 	fs.IntVar(&opts.backupCount, "backup-count", 5, "Number of backups to retain (0 to disable)")
 	fs.StringVar(&opts.applyModel, "apply-model", "", "Apply model to agents (requires --agents)")
 	fs.StringVar(&opts.agentsCSV, "agents", "", "Target agents: 'all' or comma-separated names")
+	fs.BoolVar(&opts.showVersion, "version", false, "Print version and exit")
 
 	if err := fs.Parse(args); err != nil {
 		return opts, 2
@@ -107,6 +139,13 @@ func run(args []string) int {
 	opts, exitCode := parseFlags(args)
 	if exitCode != 0 {
 		return exitCode
+	}
+
+	// --version short-circuits BEFORE any config resolution or side effect
+	// (VERSION-003). It must succeed even when no valid config exists.
+	if opts.showVersion {
+		printVersion(os.Stdout)
+		return 0
 	}
 
 	// Resolve config path (flag override or default).

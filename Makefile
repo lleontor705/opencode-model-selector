@@ -49,12 +49,12 @@ help:
 build:
 	@echo "Building $(BINARY_NAME)..."
 	@mkdir -p $(BINARY_DIR)
-	$(GOBUILD) -o $(BINARY_PATH) .
+	$(GOBUILD) -o $(BINARY_PATH) ./cmd/ocs
 	@echo "Binary built: $(BINARY_PATH)"
 
 # Run the application
 run:
-	$(GOCMD) run .
+	$(GOCMD) run ./cmd/ocs
 
 # Run tests without coverage
 test:
@@ -99,5 +99,5 @@ tidy:
 # Install binary to GOPATH/bin
 install:
 	@echo "Installing $(BINARY_NAME) to GOPATH/bin..."
-	$(GOCMD) install .
+	$(GOCMD) install ./cmd/ocs
 	@echo "Installation complete"

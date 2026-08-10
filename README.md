@@ -67,7 +67,7 @@ Manually editing `opencode.json` to assign models to agents is error-prone. You 
 
 ```bash
 # Install
-go install github.com/lleontor705/opencode-model-selector@latest
+go install github.com/lleontor705/opencode-model-selector/cmd/ocs@latest
 # The installed binary is named `ocs`.
 
 # Run

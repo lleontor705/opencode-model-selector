@@ -3,23 +3,25 @@
 ## go install (Recommended)
 
 ```bash
-go install github.com/lleontor705/opencode-model-selector@latest
+go install github.com/lleontor705/opencode-model-selector/cmd/ocs@latest
 ```
 
-Binary goes to `$GOPATH/bin/ocs` (typically `~/go/bin/` or `%USERPROFILE%\go\bin\`). (The repo/module is still `github.com/lleontor705/opencode-model-selector`; only the installed binary is named `ocs`.)
+Binary goes to `$GOPATH/bin/ocs` (typically `~/go/bin/` or `%USERPROFILE%\go\bin\`). The repo/module is still `github.com/lleontor705/opencode-model-selector`; the entrypoint lives at `cmd/ocs`, so only the installed binary is named `ocs`.
+
+> **Upgrading from a pre-`cmd/ocs` install:** earlier versions installed a binary named `opencode-model-selector` (or `opencode-model-selector.exe` on Windows) into `$GOPATH/bin`, because `go install .` named it after the module. That binary is now **stale** — the canonical name is `ocs`. You can safely delete the old `$GOPATH/bin/opencode-model-selector(.exe)`; it will not be updated by the new install command.
 
 ## Build from Source
 
 ```bash
 git clone https://github.com/lleontor705/opencode-model-selector.git
 cd opencode-model-selector
-go build -ldflags="-s -w" -o ocs .
+go build -ldflags="-s -w" -o ocs ./cmd/ocs
 ```
 
 With version stamp:
 
 ```bash
-go build -ldflags="-s -w -X main.version=local-$(git describe --tags --always)" -o ocs .
+go build -ldflags="-s -w -X main.version=local-$(git describe --tags --always)" -o ocs ./cmd/ocs
 ```
 
 ## Pre-built Binaries
