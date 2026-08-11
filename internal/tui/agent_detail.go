@@ -148,6 +148,10 @@ func fieldContextHint(field string) string {
 // an agent. For the "disable" field it always reads IsAgentDisabled so the
 // rendered value is authoritative. All other fields fall back to "(none)"
 // when absent or empty.
+//
+// Reads the MERGED value (JSON > project md > global md) so a markdown-backed
+// agent displays its actual md model instead of "(none)". This is DISPLAY
+// only; writes still go through SetAgentField (JSON only).
 func fieldDisplayValue(m Model, agent, field string) string {
 	if field == "disable" {
 		if m.config.IsAgentDisabled(agent) {
@@ -156,7 +160,7 @@ func fieldDisplayValue(m Model, agent, field string) string {
 		return "false"
 	}
 
-	val, ok := m.config.GetAgentField(agent, field)
+	val, ok := m.config.GetMergedAgentField(agent, field)
 	if !ok {
 		return fieldNone
 	}

@@ -244,5 +244,11 @@ func performSave(m Model) (Model, tea.Cmd) {
 	m.saveSuccess = true
 	m.state = ScreenAgentList
 	m.navigationStack = nil
+
+	// Recompute the mdOnlyAgents cache so the [MD] badge stays live after a
+	// save: once a JSON override exists for a previously md-only agent, the
+	// merge layer unsets MdOnly and the badge should disappear. This mirrors
+	// the NewModel initialization path.
+	m.mdOnlyAgents = computeMdOnly(m.config)
 	return m, nil
 }

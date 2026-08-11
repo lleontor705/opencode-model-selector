@@ -621,12 +621,14 @@ func TestSingleAgentFlowAfterBulkCancel(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// Markdown agent integration (T-B6)
+// Markdown agent integration (T-B6, T-B7)
 //
-// The TUI consumes cfg.GetAgents() which now includes merged markdown agents.
-// Markdown-only agents (no inline-JSON backing) appear in the list but are
-// NON-EDITABLE: ENTER on them does not open the Agent Detail editor, and edits
-// always route to the inline-JSON config only (markdown is READ-ONLY in v1).
+// The TUI consumes cfg.GetAgents() which includes merged markdown agents.
+// Markdown-backed agents are now EDITABLE in v2: ENTER opens the Agent Detail
+// editor for them, and edits persist as inline-JSON overrides
+// (agent.<name>.<field>) via SetAgentField — the .md file is never touched.
+// The merged display reader (GetMergedAgentField) lets the TUI show the
+// agent's actual md model instead of "(none)" before any override exists.
 // ---------------------------------------------------------------------------
 
 // loadFixtureWithMD loads the JSON fixture config while pointing $HOME at a
@@ -667,27 +669,32 @@ func TestTUI_ShowsMDAgents(t *testing.T) {
 		"a JSON-backed agent must NOT be flagged md-only")
 }
 
-// TestTUI_MarkdownOnlyAgentNonEditable verifies that pressing ENTER on an
-// md-only agent does NOT open the Agent Detail editor (edits route to JSON
-// only; markdown is read-only).
-func TestTUI_MarkdownOnlyAgentNonEditable(t *testing.T) {
+// TestTUI_MarkdownBackedAgentIsEditable verifies that pressing ENTER on an
+// md-backed agent OPENS the Agent Detail editor. Edits persist as inline-JSON
+// overrides (agent.<name>.<field>); the .md file is never written. This was
+// previously gated off (read-only v1); the gate is removed in T-B7 because
+// OpenCode treats agent.<name> as a per-field overlay on the md agent, so a
+// model-only JSON entry overrides the model without shadowing the prompt.
+//
+// Spec: REQ-TUI-003 — ENTER on an agent (any agent) opens AgentDetail.
+func TestTUI_MarkdownBackedAgentIsEditable(t *testing.T) {
 	cfg := loadFixtureWithMD(t, map[string]string{
-		"locked.md": "---\nmode: primary\nmodel: m\n---\nLocked body.\n",
+		"editable.md": "---\nmode: primary\nmodel: m\n---\nBody.\n",
 	})
 
 	m := NewModel(cfg, sampleGrouped(), 5)
 	items := selectableItems(m)
-	cursor := indexOf(items, "locked")
+	cursor := indexOf(items, "editable")
 	require.GreaterOrEqual(t, cursor, 0,
-		"md-only agent 'locked' must be selectable in the list")
+		"md-backed agent 'editable' must be selectable in the list")
 	m.agentCursor = cursor
 
 	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	result := updated.(Model)
-	assert.Equal(t, ScreenAgentList, result.state,
-		"ENTER on an md-only agent must NOT transition away from the agent list")
-	assert.NotEqual(t, ScreenAgentDetail, result.state,
-		"ENTER on an md-only agent must NOT open the Agent Detail editor")
+	assert.Equal(t, ScreenAgentDetail, result.state,
+		"ENTER on an md-backed agent MUST open the Agent Detail editor")
+	assert.Equal(t, "editable", result.selectedAgent,
+		"selectedAgent MUST be the md-backed agent at the cursor")
 
 	// Sanity: a JSON-backed agent still opens the editor on ENTER.
 	m2 := NewModel(cfg, sampleGrouped(), 5)
@@ -699,6 +706,152 @@ func TestTUI_MarkdownOnlyAgentNonEditable(t *testing.T) {
 	result2 := updated2.(Model)
 	assert.Equal(t, ScreenAgentDetail, result2.state,
 		"ENTER on a JSON-backed agent must still open the editor")
+}
+
+// TestTUI_MarkdownAgentShowsMergedModel verifies that a md-backed agent's
+// detail and list rows show its actual markdown model (via the merged reader),
+// NOT "(none)". This is the display-side fix that complements the edit-gate
+// removal: before any override exists, the user must see what they would be
+// overriding.
+func TestTUI_MarkdownAgentShowsMergedModel(t *testing.T) {
+	cfg := loadFixtureWithMD(t, map[string]string{
+		"rev.md": "---\nmode: subagent\nmodel: anthropic/claude-3-opus\n---\nBody.\n",
+	})
+
+	m := NewModel(cfg, sampleGrouped(), 5)
+
+	// Detail screen shows the merged model, not "(none)".
+	m.state = ScreenAgentDetail
+	m.selectedAgent = "rev"
+	m.navigationStack = []appState{ScreenAgentList}
+	detailOut := viewAgentDetail(m)
+	assert.Contains(t, detailOut, "anthropic/claude-3-opus",
+		"detail screen MUST show the merged md model for an md-backed agent")
+
+	// List row shows the merged model, not "(none)" next to the agent name.
+	listOut := viewAgentList(NewModel(cfg, sampleGrouped(), 5))
+	assert.Contains(t, listOut, "anthropic/claude-3-opus",
+		"agent list row MUST show the merged md model for an md-backed agent")
+}
+
+// TestTUI_MarkdownAgentBadgeDisappearsAfterJSONOverride verifies that once a
+// JSON override exists for an md-backed agent, the [MD] badge disappears from
+// the rendered list (the agent is no longer MdOnly in the merged view). This
+// requires performSave to recompute the mdOnlyAgents cache after a successful
+// save.
+func TestTUI_MarkdownAgentBadgeDisappearsAfterJSONOverride(t *testing.T) {
+	files := map[string]string{
+		"rev.md": "---\nmode: subagent\nmodel: md-orig\n---\nBody.\n",
+	}
+
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	gdir := filepath.Join(home, ".config", "opencode", "agents")
+	require.NoError(t, os.MkdirAll(gdir, 0o755))
+	for name, content := range files {
+		require.NoError(t, os.WriteFile(filepath.Join(gdir, name), []byte(content), 0o644))
+	}
+
+	// Writable JSON config in a separate temp dir.
+	cfgDir := t.TempDir()
+	cfgPath := filepath.Join(cfgDir, "opencode.json")
+	require.NoError(t, os.WriteFile(cfgPath, []byte("{}"), 0o600))
+	cfg, err := config.LoadConfig(cfgPath)
+	require.NoError(t, err)
+
+	m := NewModel(cfg, sampleGrouped(), 0)
+
+	// Before override: [MD] badge is shown for rev.
+	assert.True(t, m.IsMarkdownOnly("rev"),
+		"precondition: rev starts as md-only")
+	listBefore := viewAgentList(m)
+	assert.Contains(t, listBefore, "[MD]",
+		"[MD] badge MUST be shown while no JSON override exists")
+
+	// Simulate the user setting a model override via the editor flow.
+	require.NoError(t, m.config.SetAgentField("rev", "model", "json-model"))
+	m.RecordChange("rev", "model", "md-orig", "json-model")
+	m.dirty = true
+	m.state = ScreenSaveConfirm
+	m.navigationStack = []appState{ScreenAgentList}
+
+	updated, _ := performSave(m)
+	m = updated
+
+	// After Save: badge disappears because mdOnlyAgents was recomputed.
+	assert.False(t, m.IsMarkdownOnly("rev"),
+		"after a JSON override is saved, rev MUST NOT be flagged md-only")
+	listAfter := viewAgentList(m)
+	assert.NotContains(t, listAfter, "[MD]",
+		"[MD] badge MUST disappear once a JSON override exists")
+
+	// And the merged model reflected is the override.
+	val, ok := m.config.GetMergedAgentField("rev", "model")
+	require.True(t, ok)
+	assert.Equal(t, "json-model", val)
+}
+
+// TestTUI_EditingMarkdownAgentPersistsJSONOnly verifies the end-to-end editing
+// flow: selecting a model on a md-backed agent writes ONLY an inline-JSON
+// agent.<name>.model entry; the .md file remains byte-identical. After reload
+// the merged model reflects the override (per-field merge over the md agent).
+func TestTUI_EditingMarkdownAgentPersistsJSONOnly(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	gdir := filepath.Join(home, ".config", "opencode", "agents")
+	require.NoError(t, os.MkdirAll(gdir, 0o755))
+	mdContent := []byte("---\nmode: subagent\nmodel: md-original\n---\nBody.\n")
+	mdPath := filepath.Join(gdir, "review.md")
+	require.NoError(t, os.WriteFile(mdPath, mdContent, 0o644))
+
+	// Writable JSON config: empty so review is purely md-backed at first.
+	cfgDir := t.TempDir()
+	cfgPath := filepath.Join(cfgDir, "opencode.json")
+	require.NoError(t, os.WriteFile(cfgPath, []byte("{}"), 0o600))
+	cfg, err := config.LoadConfig(cfgPath)
+	require.NoError(t, err)
+
+	// Verify the precondition: GetAgentField returns absent (md only).
+	_, ok := cfg.GetAgentField("review", "model")
+	assert.False(t, ok, "precondition: review has no JSON entry yet")
+
+	// Apply a model override via SetAgentField — the exact write path used by
+	// selectModelAtCursor / commitFieldInput / ApplyModelToAgents.
+	require.NoError(t, cfg.SetAgentField("review", "model", "opencode-go/glm-5.2"))
+	require.NoError(t, cfg.Save())
+
+	// 1) The .md file MUST be byte-for-byte unchanged.
+	gotMD, err := os.ReadFile(mdPath)
+	require.NoError(t, err)
+	assert.Equal(t, string(mdContent), string(gotMD),
+		"Save MUST NOT modify the markdown agent file")
+
+	// 2) The JSON config now contains an inline-JSON agent.review.model entry
+	//    and ONLY that entry (no prompt, no mode copied from md — confirming
+	//    the JSON write path stays model-only).
+	reloaded, err := config.LoadConfig(cfgPath)
+	require.NoError(t, err)
+	jsonAgent, ok := reloaded.Data()["agent"].(map[string]interface{})
+	require.True(t, ok, "agent section MUST exist in the saved JSON")
+	review, ok := jsonAgent["review"].(map[string]interface{})
+	require.True(t, ok, "agent.review object MUST exist")
+	assert.Equal(t, "opencode-go/glm-5.2", review["model"],
+		"agent.review.model MUST equal the override")
+	assert.Len(t, review, 1,
+		"agent.review MUST contain ONLY the model field (model-only JSON entry)")
+
+	// 3) The merged model after reload reflects the override, and the rest of
+	//    the agent (mode, prompt) still comes from md.
+	merged := reloaded.MergedAgents()["review"]
+	require.NotNil(t, merged)
+	assert.Equal(t, "opencode-go/glm-5.2", merged.Fields["model"],
+		"merged model MUST reflect the saved JSON override")
+	assert.Equal(t, "subagent", merged.Mode(),
+		"merged mode MUST still come from md (per-field merge)")
+	assert.Equal(t, "Body.", merged.Prompt,
+		"merged prompt MUST still come from md body (per-field merge)")
 }
 
 // TestEditableSchemaConsistency verifies the TUI editable field schema matches

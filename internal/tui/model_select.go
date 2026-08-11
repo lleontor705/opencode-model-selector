@@ -210,6 +210,11 @@ func renderModelRow(model opencode.Model, isSelected, isCurrent bool, width int)
 
 // currentModelFullName returns the FullName of the model currently assigned to
 // the global default or the selected agent, depending on fieldEditing.
+//
+// For per-agent edits, reads the MERGED model value so the "★ current" marker
+// shows on the row matching the agent's actual current model, even when that
+// model comes from a markdown frontmatter value. This is DISPLAY only; the
+// commit path still writes via SetAgentField (JSON only).
 func currentModelFullName(m Model) string {
 	if m.fieldEditing == fieldEditingBulkAll || m.fieldEditing == fieldEditingBulkList {
 		return ""
@@ -220,8 +225,8 @@ func currentModelFullName(m Model) string {
 		}
 		return ""
 	}
-	// Per-agent model.
-	if val, ok := m.config.GetAgentField(m.selectedAgent, "model"); ok {
+	// Per-agent model: merged reader so md-backed agents show their md model.
+	if val, ok := m.config.GetMergedAgentField(m.selectedAgent, "model"); ok {
 		if s, ok := val.(string); ok && s != "" {
 			return s
 		}
@@ -344,7 +349,10 @@ func selectModelAtCursor(m Model) Model {
 		m.bulkTargets = nil
 
 	default:
-		oldVal, _ := m.config.GetAgentField(m.selectedAgent, "model")
+		// Capture the previous MERGED model so the save-confirm diff reads
+		// "<md-model> -> <new>" instead of "(none) -> <new>" when overriding
+		// a markdown-backed agent. The WRITE still calls SetAgentField.
+		oldVal, _ := m.config.GetMergedAgentField(m.selectedAgent, "model")
 		_ = m.config.SetAgentField(m.selectedAgent, "model", selected.FullName)
 		m.RecordChange(m.selectedAgent, "model", oldVal, selected.FullName)
 	}

@@ -368,3 +368,125 @@ func TestInlineJSON_PathsUnchanged(t *testing.T) {
 	assert.Len(t, subagents, 9)
 	assert.Len(t, disabled, 1)
 }
+
+// ---------------------------------------------------------------------------
+// GetMergedAgentField — display-only reader honoring md + inline-JSON
+// precedence (T-B7)
+//
+// GetMergedAgentField returns the resolved (merged) value for an agent field,
+// honoring per-field precedence (JSON > project md > global md). It is the
+// display-side companion to SetAgentField: writes still go through
+// SetAgentField (JSON only). For a markdown-only agent this returns the md
+// value, so the TUI can show the agent's actual model instead of "(none)".
+// ---------------------------------------------------------------------------
+
+// TestGetMergedAgentField_ReturnsMdValueWhenNoJSON verifies that for an agent
+// that exists only in markdown (MdOnly=true), GetMergedAgentField returns the
+// markdown frontmatter value. The pure-JSON GetAgentField returns (nil,false)
+// for the same agent — the merge layer is what surfaces the md value.
+func TestGetMergedAgentField_ReturnsMdValueWhenNoJSON(t *testing.T) {
+	home := t.TempDir()
+	setHomeEnv(t, home)
+	writeGlobalMD(t, home, "review.md",
+		"---\nmode: subagent\nmodel: anthropic/claude-3-opus\n---\nReview body.\n")
+
+	cfg := &Config{data: map[string]interface{}{}} // no JSON agents
+
+	// Pure-JSON reader: no inline-JSON entry, so absent.
+	v, ok := cfg.GetAgentField("review", "model")
+	assert.False(t, ok, "GetAgentField reads JSON only — must be absent")
+	assert.Nil(t, v)
+
+	// Merged reader: surfaces the md value.
+	got, ok := cfg.GetMergedAgentField("review", "model")
+	require.True(t, ok, "GetMergedAgentField MUST return the md model value")
+	assert.Equal(t, "anthropic/claude-3-opus", got)
+}
+
+// TestGetMergedAgentField_JSONOverridesMd verifies that when both JSON and md
+// define a field, the JSON value wins (per-field precedence), so the user's
+// inline-JSON override is reflected in the merged display.
+func TestGetMergedAgentField_JSONOverridesMd(t *testing.T) {
+	home := t.TempDir()
+	setHomeEnv(t, home)
+	writeGlobalMD(t, home, "review.md",
+		"---\nmode: subagent\nmodel: md-original\n---\nBody.\n")
+
+	cfg := &Config{data: map[string]interface{}{
+		"agent": map[string]interface{}{
+			"review": map[string]interface{}{
+				"model": "json-override",
+			},
+		},
+	}}
+
+	got, ok := cfg.GetMergedAgentField("review", "model")
+	require.True(t, ok, "merged reader MUST report the field when JSON overrides md")
+	assert.Equal(t, "json-override", got,
+		"JSON value MUST win over md per per-field precedence")
+}
+
+// TestGetMergedAgentField_MdOnlyReflectsJSONAfterSet verifies the merge is
+// live with respect to SetAgentField: after a model-only SetAgentField on a
+// previously md-only agent, GetMergedAgentField reflects the override AND the
+// merge layer marks the agent as no longer MdOnly. This is the contract that
+// lets the TUI drop the [MD] badge once a JSON override exists.
+func TestGetMergedAgentField_MdOnlyReflectsJSONAfterSet(t *testing.T) {
+	home := t.TempDir()
+	setHomeEnv(t, home)
+	writeGlobalMD(t, home, "review.md",
+		"---\nmode: subagent\nmodel: md-original\n---\nBody.\n")
+
+	cfg := &Config{data: map[string]interface{}{}}
+
+	// Initially md-only.
+	merged := cfg.MergedAgents()
+	require.True(t, merged["review"].MdOnly, "precondition: review starts md-only")
+
+	// SetAgentField writes a model-only JSON override — the per-field merge
+	// then treats the agent as JSON-backed for that field while the rest of
+	// the agent (mode, body) still comes from md.
+	require.NoError(t, cfg.SetAgentField("review", "model", "json-model"))
+
+	got, ok := cfg.GetMergedAgentField("review", "model")
+	require.True(t, ok)
+	assert.Equal(t, "json-model", got,
+		"merged model MUST reflect the model-only JSON override")
+
+	merged = cfg.MergedAgents()
+	assert.False(t, merged["review"].MdOnly,
+		"once a JSON override exists, the agent MUST NOT be flagged MdOnly")
+	assert.True(t, merged["review"].HasInlineJSON,
+		"agent MUST be flagged HasInlineJSON once any JSON override exists")
+	// Other fields still come from md (per-field merge, not whole-agent replace).
+	assert.Equal(t, "subagent", merged["review"].Mode(),
+		"non-overridden fields MUST still come from md (per-field merge)")
+}
+
+// TestGetMergedAgentField_EmptyIsTreatedAsAbsent verifies that an empty-string
+// value is treated as absent by the merged reader (consistent with pickField's
+// emptiness rule). This protects the display path from showing "" as a real
+// value when a user clears a field via JSON.
+func TestGetMergedAgentField_EmptyIsTreatedAsAbsent(t *testing.T) {
+	home := t.TempDir()
+	setHomeEnv(t, home)
+	writeGlobalMD(t, home, "empty.md",
+		"---\nmode: subagent\nmodel: \"\"\n---\nBody.\n")
+
+	cfg := &Config{data: map[string]interface{}{}}
+
+	got, ok := cfg.GetMergedAgentField("empty", "model")
+	assert.False(t, ok, "empty-string model MUST be treated as absent")
+	assert.Nil(t, got)
+}
+
+// TestGetMergedAgentField_UnknownAgentReturnsFalse verifies the reader is
+// nil-safe for agent names that exist in neither layer.
+func TestGetMergedAgentField_UnknownAgentReturnsFalse(t *testing.T) {
+	setHomeEnv(t, t.TempDir())
+	cfg := &Config{data: map[string]interface{}{}}
+
+	got, ok := cfg.GetMergedAgentField("nope", "model")
+	assert.False(t, ok)
+	assert.Nil(t, got)
+}

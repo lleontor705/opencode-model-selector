@@ -94,10 +94,13 @@ func (c *Config) SetAgentField(agentName, fieldName string, value interface{}) e
 //
 // The returned slices are sorted alphabetically for DETERMINISTIC order.
 //
-// Markdown agents are READ-ONLY in v1: Save (config.go) writes the inline-JSON
-// config only and never touches .md files. GetAgentField/GetGlobalModel/
-// decodeConfig/LoadConfig/GetConfigPath behavior for pure-JSON configs is
-// unchanged (REGRESS-001).
+// Markdown FILES stay read-only: Save (config.go) writes the inline-JSON
+// config only and never touches .md files. Markdown-backed agents ARE
+// editable in the TUI: edits persist as inline-JSON overrides
+// (agent.<name>.<field>) via SetAgentField — the OpenCode-native per-field
+// overlay (the same path the tool's bulk "Apply to ALL" already uses).
+// Pure-JSON GetAgentField/GetGlobalModel/decodeConfig/LoadConfig/GetConfigPath
+// behavior is unchanged (REGRESS-001).
 func (c *Config) GetAgents() (primary, subagents, disabled []string) {
 	for name, m := range c.mergedAgents() {
 		if IsSystemAgent(name) {
@@ -134,10 +137,37 @@ func (c *Config) mergedAgents() map[string]*MergedAgent {
 
 // MergedAgents returns the merged markdown + inline-JSON agent representation
 // keyed by agent name (decision #5: JSON > project md > global md). The TUI
-// uses this to identify markdown-only (non-editable) agents via MergedAgent.
-// MdOnly. Markdown agents are READ-ONLY in v1.
+// uses this for display (e.g. the [MD] badge while an agent is still
+// MdOnly). Markdown-backed agents ARE editable: edits persist as inline-JSON
+// overrides via SetAgentField — the .md file is never written.
 func (c *Config) MergedAgents() map[string]*MergedAgent {
 	return c.mergedAgents()
+}
+
+// GetMergedAgentField returns the resolved (merged) value of a field for an
+// agent, honoring the markdown + inline-JSON per-field precedence
+// (JSON > project md > global md). It is the DISPLAY-side companion to
+// SetAgentField: writes still go through SetAgentField (JSON only) — this
+// reader never mutates anything.
+//
+// For a markdown-only agent this surfaces the md frontmatter value so the TUI
+// can show the agent's real model (etc.) instead of "(none)". For a hybrid
+// (JSON + md) agent the JSON value wins. Empty values are treated as absent
+// (same rule the merger uses, so an explicit JSON "" does not shadow an md
+// value).
+//
+// Returns (nil, false) when the agent does not exist or the field is absent.
+func (c *Config) GetMergedAgentField(name, field string) (interface{}, bool) {
+	merged := c.MergedAgents()
+	m, ok := merged[name]
+	if !ok {
+		return nil, false
+	}
+	v, present := m.Fields[field]
+	if !present || isEmptyValue(v) {
+		return nil, false
+	}
+	return v, true
 }
 
 // GetGlobalModel returns the top-level "model" key value. Returns ("", false)

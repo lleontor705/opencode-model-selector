@@ -459,8 +459,12 @@ var agentFields = []agentFieldDef{
 
 // formatFieldValue extracts a field from config and formats it according to kind.
 // Boolean fields default to "false" when absent; all other kinds show "(none)".
+//
+// Reads the MERGED value (JSON > project md > global md) so a markdown-backed
+// agent displays its actual md model/temperature/etc. instead of "(none)".
+// This is DISPLAY only; mutations still go through SetAgentField (JSON only).
 func formatFieldValue(cfg *config.Config, agentName, fieldName string, kind fieldKind) string {
-	val, ok := cfg.GetAgentField(agentName, fieldName)
+	val, ok := cfg.GetMergedAgentField(agentName, fieldName)
 	if !ok || val == nil {
 		if kind == fieldBool {
 			return "false"

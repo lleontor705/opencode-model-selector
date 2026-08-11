@@ -263,8 +263,12 @@ var agentListOptionalFields = []string{
 // or its value is nil. Empty strings also render as "" (caller decides) —
 // for the agent list, we never want empty strings to look like a real value,
 // so we collapse them to "(none)" too.
+//
+// Reads the MERGED value (JSON > project md > global md) so a markdown-backed
+// agent shows its actual md model instead of "(none)". This is DISPLAY only;
+// writes still go through SetAgentField (JSON only).
 func compactFieldValue(m Model, name, field string) string {
-	val, ok := m.config.GetAgentField(name, field)
+	val, ok := m.config.GetMergedAgentField(name, field)
 	if !ok || val == nil {
 		return "(none)"
 	}
@@ -293,7 +297,10 @@ func renderAgentRow(m Model, name string, isDisabled, isSelected bool) string {
 
 	nameLine := prefix + name
 
-	// Append read-only indicator for markdown-only agents.
+	// Append the [MD] badge while the agent is still markdown-only (no JSON
+	// override yet). Once any inline-JSON override exists the merge layer
+	// unsets MdOnly and the badge disappears — performSave recomputes the
+	// mdOnlyAgents cache so this stays live after a save.
 	if m.IsMarkdownOnly(name) {
 		nameLine += " " + HelpStyle.Render("[MD]")
 	}
@@ -325,9 +332,6 @@ func renderAgentRow(m Model, name string, isDisabled, isSelected bool) string {
 		return AgentDisabled.Render(content)
 	case isSelected:
 		return SelectedStyle.Render(content)
-	case m.IsMarkdownOnly(name):
-		// Markdown-only agents are read-only: render dimmed (greyed/locked).
-		return AgentHidden.Render(content)
 	case m.config.IsAgentHidden(name):
 		return AgentHidden.Render(content)
 	default:
@@ -336,7 +340,7 @@ func renderAgentRow(m Model, name string, isDisabled, isSelected bool) string {
 }
 
 func configuredFieldValue(m Model, name, field string) (string, bool) {
-	val, ok := m.config.GetAgentField(name, field)
+	val, ok := m.config.GetMergedAgentField(name, field)
 	if !ok || val == nil {
 		return "", false
 	}
@@ -468,16 +472,11 @@ func updateAgentList(m Model, msg tea.KeyMsg) (Model, tea.Cmd) {
 				m.fieldEditing = "global"
 				m.quitConfirm = false
 				initModelSelectionScreen(&m)
-		} else {
-			if m.IsMarkdownOnly(item) {
-				// Markdown-only agents are READ-ONLY in v1: do not open the
-				// editor. Edits always route to the inline-JSON config only.
-				return m, nil
-			}
-			m.selectedAgent = item
-			m.pushScreen(ScreenAgentDetail)
-			m.quitConfirm = false
-		}
+	} else {
+		m.selectedAgent = item
+		m.pushScreen(ScreenAgentDetail)
+		m.quitConfirm = false
+	}
 		}
 		return m, nil
 

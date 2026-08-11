@@ -103,11 +103,15 @@ func fieldHint(fieldType string) string {
 
 // fieldCurrentValue resolves the display string for the current value of the
 // field being edited. Returns "(none)" when the field is unset.
+//
+// Reads the MERGED value so a markdown-backed agent displays its actual md
+// field value rather than "(none)". This is DISPLAY only; the commit path
+// still writes via SetAgentField (JSON only).
 func fieldCurrentValue(m Model) string {
 	if m.config == nil {
 		return fieldNone
 	}
-	val, ok := m.config.GetAgentField(m.selectedAgent, m.fieldEditing)
+	val, ok := m.config.GetMergedAgentField(m.selectedAgent, m.fieldEditing)
 	if !ok {
 		return fieldNone
 	}
@@ -242,9 +246,12 @@ func commitFieldInput(m Model) Model {
 		return m
 	}
 
-	// Capture the previous value BEFORE writing so the diff reflects the
-	// actual mutation, not the new value on both sides.
-	oldVal, _ := m.config.GetAgentField(m.selectedAgent, m.fieldEditing)
+	// Capture the previous MERGED value BEFORE writing so the diff reflects
+	// the user-visible mutation. For a markdown-backed agent this is the md
+	// value being overridden (e.g. "md-model -> new"); for a pure-JSON agent
+	// it is the JSON value (unchanged behavior). The WRITE still calls
+	// SetAgentField (JSON-only) — only the captured oldVal changes.
+	oldVal, _ := m.config.GetMergedAgentField(m.selectedAgent, m.fieldEditing)
 
 	// Commit to config. SetAgentField may reject if the agent is disabled,
 	// but disabled agents are not navigable to this screen in normal flow.
@@ -263,15 +270,18 @@ func commitFieldInput(m Model) Model {
 // creates a fresh textinput, focuses it, pre-fills with the current value if
 // one exists, and clears any stale error.
 //
-// Spec: REQ-TUI-006 — pre-fill with current value.
+// Spec: REQ-TUI-006 — pre-fill with current value. Reads the MERGED value so a
+// markdown-backed agent pre-fills with its md value (the user edits the md
+// value rather than starting from empty). The commit path still writes via
+// SetAgentField (JSON only).
 func initFieldInputScreen(m *Model, fieldName string) {
 	m.fieldInput = textinput.New()
 	m.fieldInput.Focus()
 
-	// Pre-fill with the current value so the user can edit rather than
+	// Pre-fill with the current merged value so the user can edit rather than
 	// re-type from scratch.
 	if m.config != nil {
-		if val, ok := m.config.GetAgentField(m.selectedAgent, fieldName); ok {
+		if val, ok := m.config.GetMergedAgentField(m.selectedAgent, fieldName); ok {
 			m.fieldInput.SetValue(formatFieldValue(val))
 		}
 	}

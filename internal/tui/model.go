@@ -120,9 +120,13 @@ type Model struct {
 	primaryAgents  []string
 	subagents      []string
 	disabledAgents []string
-	// mdOnlyAgents is the set of agent names that exist ONLY in markdown (no
-	// inline-JSON backing). They are non-editable in v1: ENTER on them does not
-	// open the editor, and edits always route to the JSON config.
+	// mdOnlyAgents is the set of agent names that currently exist ONLY in
+	// markdown (no inline-JSON backing). It is recomputed by NewModel and by
+	// performSave so the [MD] badge stays live: once a JSON override is saved
+	// for an agent, it leaves this set. The badge hints that the base is a
+	// markdown file; it does NOT mean the agent is non-editable — ENTER opens
+	// the editor for any agent, and edits persist as inline-JSON overrides
+	// (agent.<name>.<field>) via SetAgentField. The .md file is never written.
 	mdOnlyAgents map[string]bool
 	// editableFields is the schema shown on the Agent Detail screen.
 	editableFields []string
@@ -247,8 +251,10 @@ func computeMdOnly(cfg *config.Config) map[string]bool {
 	return out
 }
 
-// IsMarkdownOnly reports whether name is a markdown-only agent (no inline-JSON
-// backing). Such agents are display-only / non-editable in v1.
+// IsMarkdownOnly reports whether name is currently a markdown-only agent (no
+// inline-JSON backing yet). This is informational only — used to render the
+// [MD] badge hint. It does NOT gate editing: markdown-backed agents are
+// editable, and edits persist as inline-JSON overrides via SetAgentField.
 func (m Model) IsMarkdownOnly(name string) bool {
 	return m.mdOnlyAgents[name]
 }
