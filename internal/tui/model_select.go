@@ -214,7 +214,7 @@ func renderModelRow(model opencode.Model, isSelected, isCurrent bool, width int)
 // For per-agent edits, reads the MERGED model value so the "★ current" marker
 // shows on the row matching the agent's actual current model, even when that
 // model comes from a markdown frontmatter value. This is DISPLAY only; the
-// commit path still writes via SetAgentField (JSON only).
+// commit path still writes a JSON model override.
 func currentModelFullName(m Model) string {
 	if m.fieldEditing == fieldEditingBulkAll || m.fieldEditing == fieldEditingBulkList {
 		return ""
@@ -301,7 +301,7 @@ func updateModelSelection(m Model, msg tea.Msg) (Model, tea.Cmd) {
 
 // selectModelAtCursor validates and persists the model at the current cursor
 // position. For global edits it calls SetGlobalModel; for per-agent edits it
-// calls SetAgentField. Records the change so the save-confirm screen can
+// writes a model override. Records the change so the save-confirm screen can
 // render a diff, marks dirty, and returns to the immutable origin.
 func selectModelAtCursor(m Model) Model {
 	if m.modelCursor < 0 || m.modelCursor >= len(m.filteredModels) {
@@ -357,7 +357,7 @@ func selectModelAtCursor(m Model) Model {
 	default:
 		// Capture the previous MERGED model so the save-confirm diff reads
 		// "<md-model> -> <new>" instead of "(none) -> <new>" when overriding
-		// a markdown-backed agent. The WRITE still calls SetAgentField.
+		// a markdown-backed agent. The write remains a JSON model override.
 		oldVal, _, _ := m.config.ResolveEffectiveModel(m.selectedAgent)
 		if oldVal == selected.FullName {
 			m.popScreen()

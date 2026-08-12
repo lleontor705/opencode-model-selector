@@ -3,8 +3,8 @@
 //
 // This file contains the root Model struct, the appState state machine, and
 // the global Update() dispatcher. Per-screen view and key handling live in
-// sibling files (agent_list.go, agent_detail.go, model_select.go,
-// field_input.go, save_confirm.go) implemented in subsequent tasks. Until
+// sibling files (agent_list.go, model_select.go, save_confirm.go) implemented
+// in subsequent tasks. Until
 // those land, View() returns placeholder strings so the dispatcher is fully
 // exercised by tests.
 //
@@ -40,25 +40,16 @@ const (
 	fieldEditingBulkList = "bulk-list"
 )
 
-// appState enumerates the five screens of the TUI state machine (design #606,
-// Section 2 Decision 3). Ordering matters only for iota stability; do NOT
-// re-order existing entries.
+// appState enumerates the screens of the TUI state machine.
 type appState int
 
 const (
 	// ScreenAgentList is the entry screen: lists primary agents, subagents,
 	// and the global default model (REQ-TUI-002, REQ-TUI-003).
 	ScreenAgentList appState = iota
-	// ScreenAgentDetail shows the 6 editable fields for a single agent
-	// (REQ-TUI-004).
-	ScreenAgentDetail
 	// ScreenModelSelection shows all available models grouped by provider
 	// with a fuzzy filter (REQ-TUI-005).
 	ScreenModelSelection
-	// ScreenFieldInput captures free-form text for non-model fields
-	// (temperature, top_p, color, steps) with per-field validation
-	// (REQ-TUI-006).
-	ScreenFieldInput
 	// ScreenSaveConfirm shows a summary of pending changes and triggers the
 	// atomic save flow (REQ-TUI-007).
 	ScreenSaveConfirm
@@ -68,16 +59,9 @@ const (
 	ScreenAgentMultiSelect
 )
 
-// editableFieldSchema is the fixed list of fields exposed on the Agent Detail
-// screen. Order matches the design's transition table (Section 7) and the
-// validation table (Section 7.1).
-var editableFieldSchema = []string{
-	"model", "temperature", "top_p", "color", "steps", "disable",
-}
-
 // Change records a single in-memory mutation that will be persisted on save.
 // Target is "global" for the global default model or the agent name for
-// per-agent edits; Field is the config key (model, temperature, ...). OldVal
+// per-agent edits; Field is the config key. OldVal
 // and NewVal carry the raw interface{} values from the config layer so the
 // save-confirm screen can render a human-readable diff.
 type Change struct {
@@ -110,10 +94,9 @@ type Model struct {
 
 	// Each selectable screen owns its cursor so nested screens cannot overwrite
 	// the selection that must be restored when returning.
-	agentCursor  int
-	detailCursor int
-	modelCursor  int
-	// selectedAgent is the agent name being edited on ScreenAgentDetail.
+	agentCursor int
+	modelCursor int
+	// selectedAgent is the agent whose model is being edited.
 	selectedAgent string
 	// navigationStack stores immutable screen origins for nested transitions.
 	navigationStack []appState
@@ -131,18 +114,14 @@ type Model struct {
 	// performSave so the [MD] badge stays live: once a JSON override is saved
 	// for an agent, it leaves this set. The badge hints that the base is a
 	// markdown file; it does NOT mean the agent is non-editable — ENTER opens
-	// the editor for any agent, and edits persist as inline-JSON overrides
-	// (agent.<name>.<field>) via SetAgentField. The .md file is never written.
+	// the model picker and model edits persist as inline-JSON overrides. The .md
+	// file is never written.
 	mdOnlyAgents map[string]bool
-	// editableFields is the schema shown on the Agent Detail screen.
-	editableFields []string
 
 	// --- Sub-components ---
 
 	// filterInput is the fuzzy filter for model selection.
 	filterInput textinput.Model
-	// fieldInput captures typed values on ScreenFieldInput.
-	fieldInput textinput.Model
 	// Each scrolling screen owns a Bubbles viewport. The existing screen-owned
 	// cursors remain the source of truth; viewport offsets only control clipping.
 	agentViewport viewport.Model
@@ -164,8 +143,7 @@ type Model struct {
 	// not a full screen. When true, only y/Y/ENTER (confirm) and n/N/ESC
 	// (cancel) are accepted; all other keys are ignored (REQ-TUI-003).
 	quitConfirm bool
-	// fieldEditing records which field is being edited on ScreenFieldInput
-	// (or "global" / "model" sentinel values).
+	// fieldEditing identifies the model assignment target or bulk flow.
 	fieldEditing string
 	// bulkTargets holds the agent names selected on ScreenAgentMultiSelect.
 	// Populated when transitioning to ScreenModelSelection with
@@ -222,13 +200,12 @@ func NewModelWithCatalog(cfg *config.Config, grouped map[string][]opencode.Model
 
 	catalog.Buckets = agentcatalog.Classify(catalog.Records())
 	m := Model{
-		state:          ScreenAgentList,
-		config:         cfg,
-		groupedModels:  grouped,
-		editableFields: append([]string(nil), editableFieldSchema...),
-		backupCount:    backupCount,
-		agentCatalog:   catalog,
-		catalogByName:  make(map[string]agentcatalog.AgentRecord),
+		state:         ScreenAgentList,
+		config:        cfg,
+		groupedModels: grouped,
+		backupCount:   backupCount,
+		agentCatalog:  catalog,
+		catalogByName: make(map[string]agentcatalog.AgentRecord),
 	}
 
 	// Flatten the grouped map into a single slice for the fuzzy filter. The
@@ -241,7 +218,6 @@ func NewModelWithCatalog(cfg *config.Config, grouped map[string][]opencode.Model
 	// Initialize textinput sub-components so later handlers can Update them
 	// without re-allocating.
 	m.filterInput = textinput.New()
-	m.fieldInput = textinput.New()
 	m.agentViewport = viewport.New(0, 0)
 	m.modelViewport = viewport.New(0, 0)
 	m.saveViewport = viewport.New(0, 0)
@@ -287,7 +263,7 @@ func computeMdOnly(cfg *config.Config) map[string]bool {
 // IsMarkdownOnly reports whether name is currently a markdown-only agent (no
 // inline-JSON backing yet). This is informational only — used to render the
 // [MD] badge hint. It does NOT gate editing: markdown-backed agents are
-// editable, and edits persist as inline-JSON overrides via SetAgentField.
+// editable, and model edits persist as inline-JSON overrides.
 func (m Model) IsMarkdownOnly(name string) bool {
 	return m.mdOnlyAgents[name]
 }
@@ -450,9 +426,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.state == ScreenModelSelection {
 			return updateModelSelection(m, msg)
 		}
-		if m.state == ScreenFieldInput {
-			return updateFieldInput(m, msg)
-		}
 		if m.state == ScreenSaveConfirm {
 			return updateSaveConfirm(m, msg)
 		}
@@ -483,8 +456,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch m.state {
 		case ScreenAgentList:
 			return updateAgentList(m, msg)
-		case ScreenAgentDetail:
-			return updateAgentDetail(m, msg)
 		}
 
 		return m, nil
@@ -514,12 +485,8 @@ func (m Model) View() string {
 	switch m.state {
 	case ScreenAgentList:
 		return viewAgentList(m)
-	case ScreenAgentDetail:
-		return viewAgentDetail(m)
 	case ScreenModelSelection:
 		return viewModelSelection(m)
-	case ScreenFieldInput:
-		return viewFieldInput(m)
 	case ScreenSaveConfirm:
 		return viewSaveConfirm(m)
 	case ScreenAgentMultiSelect:

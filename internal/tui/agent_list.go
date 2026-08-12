@@ -15,15 +15,12 @@
 //
 //	── Primary Agents ──
 //	  ▶ agent-name [DISABLED] · model <value or (none)>
-//	    temp .4 · top_p .9 · color #FF5733 · steps 10
 //
 //	── Subagents ──
 //	  ▶ agent-name  [H]
 //	    ...same compact configured-value summary...
 //
 //	[ <Agents> · 11 agents · ● unsaved ]                  ? for help
-//
-// Rows stay compact; Agent Detail remains the complete six-field editor.
 //
 // Spec coverage:
 //   - REQ-TUI-002: Agent list rendering (sections, model display, indicators)
@@ -33,7 +30,6 @@ package tui
 import (
 	"fmt"
 	"sort"
-	"strconv"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -101,11 +97,9 @@ func selectableItems(m Model) []string {
 //
 //	── Primary Agents ──
 //	  ▶ agent-name [DISABLED] · model <value or (none)>
-//	    temp .4 · top_p .9 · color #FF5733 · steps 10
 //
 //	── Subagents ──
 //	  ▶ agent-name  [H]
-//	    ...same compact configured-value summary...
 //
 //	[ <Agents> · 11 agents · ● unsaved ]                  ? for help
 //
@@ -113,9 +107,6 @@ func selectableItems(m Model) []string {
 // Hidden agents appear with [H] and ARE selectable.
 // System agents are already filtered out by GetAgents (never in primaryAgents
 // or subagents).
-//
-// Only configured optional values appear in the list. The Agent Detail screen
-// retains all six editable fields. (REQ-TUI-002)
 //
 // Spec: REQ-TUI-002.
 func viewAgentList(m Model) string {
@@ -285,16 +276,6 @@ func renderGlobalRow(modelVal string, isSelected bool) string {
 	return AgentNormal.Render(content)
 }
 
-// agentListOptionalFields is the ordered set of configured values shown on the
-// compact second line. Model stays on line one and disable is represented by a
-// badge, so neither appears here.
-var agentListOptionalFields = []string{
-	"temperature",
-	"top_p",
-	"color",
-	"steps",
-}
-
 // compactFieldValue resolves a single field for an agent and renders it as a
 // short string for the agent list. Returns "(none)" if the field is missing
 // or its value is nil. Empty strings also render as "" (caller decides) —
@@ -303,7 +284,7 @@ var agentListOptionalFields = []string{
 //
 // Reads the MERGED value (JSON > project md > global md) so a markdown-backed
 // agent shows its actual md model instead of "(none)". This is DISPLAY only;
-// writes still go through SetAgentField (JSON only).
+// model writes remain JSON-only.
 func compactFieldValue(m Model, name, field string) string {
 	if field == "model" {
 		if record, ok := m.catalogByName[name]; ok && record.Model != "" {
@@ -321,14 +302,12 @@ func compactFieldValue(m Model, name, field string) string {
 	return s
 }
 
-// renderAgentRow renders a compact two-line agent summary. The first line has
-// identity, badges, and model. The second includes configured optional values
-// only. Agent Detail remains the complete six-field editor.
+// renderAgentRow renders a compact agent summary with identity, badges, and
+// model.
 //
 // Layout:
 //
 //	[cursor] name [H] | [DISABLED] · model <value or (none)>
-//	  temp .4 · top_p .9 · color #FF5733 · steps 10
 //
 // Spec: REQ-TUI-002 — agent list rendering summarizes configured values.
 func renderAgentRow(m Model, name string, isDisabled, isSelected bool) string {
@@ -356,19 +335,7 @@ func renderAgentRow(m Model, name string, isDisabled, isSelected bool) string {
 	}
 	nameLine += " · model " + FieldValue.Render(compactFieldValue(m, name, "model"))
 
-	values := make([]string, 0, len(agentListOptionalFields))
-	for _, field := range agentListOptionalFields {
-		val, ok := configuredFieldValue(m, name, field)
-		if !ok {
-			continue
-		}
-		label := field
-		if field == "temperature" {
-			label = "temp"
-		}
-		values = append(values, label+" "+val)
-	}
-	content := nameLine + "\n    " + strings.Join(values, " · ")
+	content := nameLine
 	switch {
 	case isDisabled:
 		return AgentDisabled.Render(content)
@@ -386,26 +353,6 @@ func isAgentHidden(m Model, name string) bool {
 		return true
 	}
 	return m.config != nil && m.config.IsAgentHidden(name)
-}
-
-func configuredFieldValue(m Model, name, field string) (string, bool) {
-	val, ok := m.config.GetMergedAgentField(name, field)
-	if !ok || val == nil {
-		return "", false
-	}
-	switch value := val.(type) {
-	case float64:
-		s := strconv.FormatFloat(value, 'f', -1, 64)
-		if strings.HasPrefix(s, "0.") {
-			s = strings.TrimPrefix(s, "0")
-		} else if strings.HasPrefix(s, "-0.") {
-			s = "-" + strings.TrimPrefix(s, "-0")
-		}
-		return s, true
-	default:
-		s := fmt.Sprintf("%v", value)
-		return s, s != ""
-	}
 }
 
 // updateAgentList handles key presses on the agent list screen.

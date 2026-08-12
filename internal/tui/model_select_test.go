@@ -44,7 +44,7 @@ func richGrouped() map[string][]opencode.Model {
 }
 
 // newModelSelectModel constructs a Model positioned on the Model Selection
-// screen. It mirrors the initialization that updateAgentList / updateAgentDetail
+// screen. It mirrors the initialization performed by updateAgentList
 // perform when transitioning to ScreenModelSelection.
 //
 //   - fieldEditing "global" → editing the global default model
@@ -514,7 +514,7 @@ func TestUpdateModelSelection_EnterOnGlobal_SetsGlobalModel(t *testing.T) {
 }
 
 // TestUpdateModelSelection_EnterOnAgent_SetsAgentModel verifies that ENTER
-// when editing a per-agent model calls SetAgentField, sets dirty, and returns
+// when editing a per-agent model writes the override, sets dirty, and returns
 // to previousState.
 func TestUpdateModelSelection_EnterOnAgent_SetsAgentModel(t *testing.T) {
 	m := newModelSelectModel(t, "model", "code-reviewer")
@@ -807,27 +807,6 @@ func TestUpdateAgentList_EnterOnGlobal_InitializesFilterInput(t *testing.T) {
 		"filteredModels MUST be initialized with all models when entering model selection")
 	assert.Equal(t, 0, newM.modelCursor,
 		"cursor MUST be reset to 0 when entering model selection")
-}
-
-// TestUpdateAgentDetail_EnterOnModel_InitializesFilterInput verifies that
-// transitioning from agent detail to model selection initializes the filter
-// input and filteredModels.
-func TestUpdateAgentDetail_EnterOnModel_InitializesFilterInput(t *testing.T) {
-	m := NewModel(fixtureConfig(t), richGrouped(), 5)
-	m.state = ScreenAgentDetail
-	m.selectedAgent = "code-reviewer"
-	m.detailCursor = 0 // "model"
-	m.navigationStack = []appState{ScreenAgentList}
-	m.filterInput.SetValue("stale")
-
-	newM, _ := updateAgentDetail(m, tea.KeyMsg{Type: tea.KeyEnter})
-	assert.Equal(t, ScreenModelSelection, newM.state)
-	assert.Empty(t, newM.filterInput.Value(),
-		"filterInput MUST be reset to empty when entering model selection from detail")
-	assert.NotEmpty(t, newM.filteredModels,
-		"filteredModels MUST be initialized with all models when entering model selection from detail")
-	assert.Equal(t, 0, newM.modelCursor,
-		"cursor MUST be reset to 0 when entering model selection from detail")
 }
 
 // ---------------------------------------------------------------------------

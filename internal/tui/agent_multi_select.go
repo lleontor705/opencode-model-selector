@@ -23,7 +23,7 @@ import (
 
 // initAgentMultiSelectScreen populates the multi-select item list from the
 // current Model's agent data. Disabled agents are excluded from selection
-// (they cannot be mutated by SetAgentField anyway). Hidden agents are INCLUDED
+// (they cannot receive model overrides anyway). Hidden agents are INCLUDED
 // per Business Rule 4. Resets cursor and checked state.
 //
 // Items are derived from m.primaryAgents and m.subagents (already populated

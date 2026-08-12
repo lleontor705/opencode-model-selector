@@ -104,17 +104,6 @@ func TestNewModel_NilModelsDoesNotPanic(t *testing.T) {
 	})
 }
 
-// TestNewModel_EditableFields verifies the 6-field schema used by the Agent
-// Detail screen.
-//
-// Spec: REQ-TUI-004 — Happy path — show 6 editable fields.
-func TestNewModel_EditableFields(t *testing.T) {
-	m := NewModel(fixtureConfig(t), sampleGrouped(), 5)
-	expected := []string{"model", "temperature", "top_p", "color", "steps", "disable"}
-	assert.Equal(t, expected, m.editableFields,
-		"editableFields must be the 6 fields shown on the Agent Detail screen, in this order")
-}
-
 // TestNewModel_AgentListsPopulatedFromConfig verifies that primaryAgents,
 // subagents, and disabledAgents are seeded from the loaded config.
 //
@@ -170,15 +159,11 @@ func TestNewModel_DefaultCursorZero(t *testing.T) {
 	assert.False(t, m.dirty, "freshly constructed model must not be dirty")
 }
 
-// TestNewModel_TextInputsInitialized verifies that the bubbles/textinput
-// sub-components are usable (not zero-value) so subsequent screen handlers
-// can call Update on them without panicking.
-func TestNewModel_TextInputsInitialized(t *testing.T) {
+// TestNewModel_FilterInputInitialized verifies that the model picker input is
+// usable by subsequent screen handlers.
+func TestNewModel_FilterInputInitialized(t *testing.T) {
 	m := NewModel(fixtureConfig(t), sampleGrouped(), 5)
-	// A zero-value textinput.Model would panic on Update; calling Value()
-	// on a New()'d model returns an empty string safely.
 	assert.Equal(t, "", m.filterInput.Value())
-	assert.Equal(t, "", m.fieldInput.Value())
 }
 
 // ---------------------------------------------------------------------------
@@ -241,7 +226,7 @@ func TestUpdate_Q_Quits(t *testing.T) {
 func TestUpdate_ESC_PopsToPreviousState(t *testing.T) {
 	m := NewModel(fixtureConfig(t), sampleGrouped(), 5)
 	// Simulate being on a sub-screen entered from AgentList.
-	m.state = ScreenAgentDetail
+	m.state = ScreenModelSelection
 	m.navigationStack = []appState{ScreenAgentList}
 
 	newM, _ := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
@@ -327,10 +312,9 @@ func TestView_AllStatesReturnNonEmpty(t *testing.T) {
 	cfg := fixtureConfig(t)
 	states := []appState{
 		ScreenAgentList,
-		ScreenAgentDetail,
 		ScreenModelSelection,
-		ScreenFieldInput,
 		ScreenSaveConfirm,
+		ScreenAgentMultiSelect,
 	}
 	for _, st := range states {
 		m := NewModel(cfg, sampleGrouped(), 5)
@@ -372,14 +356,11 @@ func TestUpdate_AgentActivationNeverReachesNonModelEditors(t *testing.T) {
 	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	m = updated.(Model)
 	assert.Equal(t, ScreenModelSelection, m.state)
-	assert.NotEqual(t, ScreenAgentDetail, m.state)
-	assert.NotEqual(t, ScreenFieldInput, m.state)
 }
 
 func TestUpdate_SaveConfirmRepeatedSDoesNotCorruptCancelTarget(t *testing.T) {
 	m := NewModel(fixtureConfig(t), sampleGrouped(), 5)
-	m.state = ScreenAgentDetail
-	m.navigationStack = []appState{ScreenAgentList}
+	m.state = ScreenAgentList
 	m.dirty = true
 
 	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}})
@@ -392,7 +373,7 @@ func TestUpdate_SaveConfirmRepeatedSDoesNotCorruptCancelTarget(t *testing.T) {
 
 	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
 	m = updated.(Model)
-	assert.Equal(t, ScreenAgentDetail, m.state)
+	assert.Equal(t, ScreenAgentList, m.state)
 }
 
 func TestModelPicker_PrintableQsjkReachFilterInput(t *testing.T) {
@@ -405,18 +386,6 @@ func TestModelPicker_PrintableQsjkReachFilterInput(t *testing.T) {
 
 	assert.Equal(t, ScreenModelSelection, m.state)
 	assert.Equal(t, "qsjk", m.filterInput.Value())
-}
-
-func TestFieldInput_PrintableQsReachTextInput(t *testing.T) {
-	m := newFieldInputModel(t, "code-reviewer", "color")
-
-	for _, r := range []rune{'q', 's'} {
-		updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
-		m = updated.(Model)
-	}
-
-	assert.Equal(t, ScreenFieldInput, m.state)
-	assert.Equal(t, "qs", m.fieldInput.Value())
 }
 
 func TestAgentList_CursorRestoredAfterModelPicker(t *testing.T) {
@@ -602,8 +571,8 @@ func TestSingleAgentFlowAfterBulkCancel(t *testing.T) {
 //
 // The TUI consumes cfg.GetAgents() which includes merged markdown agents.
 // Markdown-backed agents are now EDITABLE in v2: ENTER opens the Agent Detail
-// editor for them, and edits persist as inline-JSON overrides
-// (agent.<name>.<field>) via SetAgentField — the .md file is never touched.
+// model picker for them, and edits persist as inline-JSON model overrides — the
+// .md file is never touched.
 // The merged display reader (GetMergedAgentField) lets the TUI show the
 // agent's actual md model instead of "(none)" before any override exists.
 // ---------------------------------------------------------------------------
@@ -695,16 +664,6 @@ func TestTUI_MarkdownAgentShowsMergedModel(t *testing.T) {
 		"rev.md": "---\nmode: subagent\nmodel: anthropic/claude-3-opus\n---\nBody.\n",
 	})
 
-	m := NewModel(cfg, sampleGrouped(), 5)
-
-	// Detail screen shows the merged model, not "(none)".
-	m.state = ScreenAgentDetail
-	m.selectedAgent = "rev"
-	m.navigationStack = []appState{ScreenAgentList}
-	detailOut := viewAgentDetail(m)
-	assert.Contains(t, detailOut, "anthropic/claude-3-opus",
-		"detail screen MUST show the merged md model for an md-backed agent")
-
 	// List row shows the merged model, not "(none)" next to the agent name.
 	listOut := viewAgentList(NewModel(cfg, sampleGrouped(), 5))
 	assert.Contains(t, listOut, "anthropic/claude-3-opus",
@@ -794,8 +753,7 @@ func TestTUI_EditingMarkdownAgentPersistsJSONOnly(t *testing.T) {
 	_, ok := cfg.GetAgentField("review", "model")
 	assert.False(t, ok, "precondition: review has no JSON entry yet")
 
-	// Apply a model override via SetAgentField — the exact write path used by
-	// selectModelAtCursor / commitFieldInput / ApplyModelToAgents.
+	// Apply the same model override behavior used by the model picker.
 	require.NoError(t, cfg.SetAgentField("review", "model", "opencode-go/glm-5.2"))
 	require.NoError(t, cfg.Save())
 
@@ -829,13 +787,4 @@ func TestTUI_EditingMarkdownAgentPersistsJSONOnly(t *testing.T) {
 		"merged mode MUST still come from md (per-field merge)")
 	assert.Equal(t, "Body.", merged.Prompt,
 		"merged prompt MUST still come from md body (per-field merge)")
-}
-
-// TestEditableSchemaConsistency verifies the TUI editable field schema matches
-// the canonical 6-field set shared with cmd/ocs agentFields (model,
-// temperature, top_p, color, steps, disable), keeping the two in lockstep.
-func TestEditableSchemaConsistency(t *testing.T) {
-	expected := []string{"model", "temperature", "top_p", "color", "steps", "disable"}
-	assert.Equal(t, expected, editableFieldSchema,
-		"editableFieldSchema must match the canonical 6-field set (cmd/ocs agentFields)")
 }

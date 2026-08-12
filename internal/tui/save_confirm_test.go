@@ -420,44 +420,6 @@ func TestPerformSave_ClearsChanges(t *testing.T) {
 		"changes MUST be cleared after a successful save so a re-entry to the screen starts fresh")
 }
 
-func TestCommitFieldInput_RecordsChange(t *testing.T) {
-	m := NewModel(fixtureConfig(t), sampleGrouped(), 5)
-	m.state = ScreenFieldInput
-	m.navigationStack = []appState{ScreenAgentDetail}
-	m.selectedAgent = "code-reviewer"
-	m.fieldEditing = "temperature"
-	m.fieldInput.SetValue("0.5")
-
-	before, _ := m.config.GetAgentField("code-reviewer", "temperature")
-	newM := commitFieldInput(m)
-
-	require.Len(t, newM.changes, 1,
-		"committing a field value MUST record a change")
-	assert.Equal(t, "code-reviewer", newM.changes[0].Target)
-	assert.Equal(t, "temperature", newM.changes[0].Field)
-	assert.Equal(t, before, newM.changes[0].OldVal,
-		"OldVal MUST reflect the previous field value")
-	assert.Equal(t, 0.5, newM.changes[0].NewVal,
-		"NewVal MUST be the parsed value, not the raw input string")
-}
-
-func TestToggleDisable_RecordsChange(t *testing.T) {
-	m := NewModel(fixtureConfig(t), sampleGrouped(), 5)
-	m.state = ScreenAgentDetail
-	m.selectedAgent = "plan"
-	require.False(t, m.config.IsAgentDisabled("plan"),
-		"precondition: 'plan' is enabled in the fixture")
-
-	toggleDisable(&m)
-
-	require.Len(t, m.changes, 1,
-		"toggling disable MUST record a change")
-	assert.Equal(t, "plan", m.changes[0].Target)
-	assert.Equal(t, "disable", m.changes[0].Field)
-	assert.Equal(t, false, m.changes[0].OldVal)
-	assert.Equal(t, true, m.changes[0].NewVal)
-}
-
 // ---------------------------------------------------------------------------
 // formatValue helper
 // ---------------------------------------------------------------------------
@@ -512,7 +474,7 @@ func TestViewSaveConfirm_LongDiffIsScrollableAndFooterVisible(t *testing.T) {
 
 func TestSaveConfirm_EscReturnsImmutableOrigin(t *testing.T) {
 	m := newSaveConfirmModel(t, true)
-	m.navigationStack = []appState{ScreenAgentList, ScreenAgentDetail}
+	m.navigationStack = []appState{ScreenAgentList}
 
 	for _, key := range []rune{'s', 's', 'q'} {
 		updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{key}})
@@ -521,8 +483,8 @@ func TestSaveConfirm_EscReturnsImmutableOrigin(t *testing.T) {
 	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
 	m = updated.(Model)
 
-	assert.Equal(t, ScreenAgentDetail, m.state)
-	assert.Equal(t, []appState{ScreenAgentList}, m.navigationStack)
+	assert.Equal(t, ScreenAgentList, m.state)
+	assert.Empty(t, m.navigationStack)
 }
 
 func TestSaveConfirm_UnrelatedKeysDoNotMutateState(t *testing.T) {

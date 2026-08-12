@@ -114,8 +114,6 @@ func TestT10AgentList_AllModelFlowsReachableWithoutGenericEditor(t *testing.T) {
 			}
 			updated, _ := updateAgentList(candidate, tc.key)
 			assert.Equal(t, tc.wantState, updated.state)
-			assert.NotEqual(t, ScreenAgentDetail, updated.state)
-			assert.NotEqual(t, ScreenFieldInput, updated.state)
 			if tc.wantEdit != "" {
 				assert.Equal(t, tc.wantEdit, updated.fieldEditing)
 			}

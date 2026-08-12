@@ -48,12 +48,9 @@ func TestWindowSizeMsg_ResizesListAndViewportComponents(t *testing.T) {
 	assert.Positive(t, m.modelViewport.Height)
 }
 
-func TestViewAgentList_CompactRowShowsConfiguredValuesAndOmitsUnsetFields(t *testing.T) {
+func TestViewAgentList_CompactRowShowsModelOnly(t *testing.T) {
 	cfg := fixtureConfig(t)
 	require.NoError(t, cfg.SetAgentField("plan", "model", "openai/gpt-5"))
-	require.NoError(t, cfg.SetAgentField("plan", "top_p", 0.9))
-	require.NoError(t, cfg.SetAgentField("plan", "color", "#FF5733"))
-	require.NoError(t, cfg.SetAgentField("plan", "steps", 10.0))
 	m := NewModel(cfg, sampleGrouped(), 5)
 	m.agentCursor = indexOf(selectableItems(m), "plan")
 	m = resizeModel(t, m, 80, 24)
@@ -61,9 +58,6 @@ func TestViewAgentList_CompactRowShowsConfiguredValuesAndOmitsUnsetFields(t *tes
 	out := m.View()
 	assert.Contains(t, out, "plan")
 	assert.Contains(t, out, "openai/gpt-5")
-	assert.Contains(t, out, "temp .4 · top_p .9 · color #FF5733 · steps 10")
-	assert.NotContains(t, out, "temperature:")
-	assert.NotContains(t, out, "disable:")
 }
 
 func TestView_FooterRemainsVisibleAtMinimumSupportedHeight(t *testing.T) {
@@ -123,14 +117,6 @@ func TestView_HelpFootersFitSupportedWidthsAndKeepCriticalActions(t *testing.T) 
 			fullHelp:    "Enter Model · A Apply-all · M Multi · S Review & Save · Q Quit",
 		},
 		{
-			name: "agent detail",
-			model: func(t *testing.T) Model {
-				return newDetailModel(t, "code-reviewer")
-			},
-			compactHelp: "Enter Edit · S Save · Esc Back",
-			fullHelp:    "Enter Edit · Space Toggle disable · S Review & Save · Esc Back",
-		},
-		{
 			name: "model picker",
 			model: func(t *testing.T) Model {
 				m := NewModel(fixtureConfig(t), sampleGrouped(), 5)
@@ -141,15 +127,6 @@ func TestView_HelpFootersFitSupportedWidthsAndKeepCriticalActions(t *testing.T) 
 			},
 			compactHelp: "Enter Apply · Esc Cancel",
 			fullHelp:    "Enter Apply model · Esc Cancel",
-		},
-		{
-			name: "field input",
-			model: func(t *testing.T) Model {
-				m := newFieldInputModel(t, "code-reviewer", "temperature")
-				return m
-			},
-			compactHelp: "Enter Apply · Esc Discard",
-			fullHelp:    "Enter Apply · Esc Discard",
 		},
 		{
 			name: "save review",

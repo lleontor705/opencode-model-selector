@@ -1,9 +1,8 @@
 // Package tui implements the Bubbletea terminal UI for the opencode model
-// selector. This file declares the lipgloss styles shared by every screen
-// (REQ-TUI-002, REQ-TUI-004, REQ-TUI-005, REQ-TUI-007).
+// selector. This file declares the lipgloss styles shared by every screen.
 //
 // Styles are package-level variables so that any screen-rendering function
-// added by subsequent tasks (agent_list.go, agent_detail.go, ...) can compose
+// added by subsequent tasks can compose
 // or override them without re-declaring color constants.
 //
 // The palette is intentionally cohesive (inspired by Tokyo Night / Catppuccin
@@ -67,7 +66,7 @@ var (
 	AgentNormal = lipgloss.NewStyle().
 			Foreground(lipgloss.Color(colorBright))
 
-	// AgentDisabled renders a disabled (disable: true) agent row. The row is
+	// AgentDisabled renders an unavailable agent row. The row is
 	// dimmed and must NOT be focusable (REQ-TUI-002).
 	AgentDisabled = lipgloss.NewStyle().
 			Foreground(lipgloss.Color(colorMuted)).
@@ -93,31 +92,14 @@ var (
 			Bold(true).
 			Foreground(lipgloss.Color(colorPrimary))
 
-	// FieldLabel renders the left-hand label on the Agent Detail screen
-	// ("model:", "temperature:").
+	// FieldLabel renders labels in model assignment rows.
 	FieldLabel = lipgloss.NewStyle().
 			Bold(true).
 			Foreground(lipgloss.Color(colorPrimary))
 
-	// FieldValue renders the right-hand current value on the Agent Detail
-	// screen. Off-white reads well on dark terminals.
+	// FieldValue renders current model values.
 	FieldValue = lipgloss.NewStyle().
 			Foreground(lipgloss.Color(colorBright))
-
-	// FieldHint renders parenthetical hints like "(default: 0.7)" — dimmed
-	// so the user knows they're optional guidance, not the active value.
-	FieldHint = lipgloss.NewStyle().
-			Foreground(lipgloss.Color(colorMuted)).
-			Italic(true)
-
-	// BoolEnabled renders "✓ enabled" with a green checkmark.
-	BoolEnabled = lipgloss.NewStyle().
-			Foreground(lipgloss.Color(colorTertiary)).
-			Bold(true)
-
-	// BoolDisabled renders "✗ disabled" with a soft red X.
-	BoolDisabled = lipgloss.NewStyle().
-			Foreground(lipgloss.Color(colorError))
 
 	// DirtyIndicator renders the "*" marker shown next to the title or row
 	// when unsaved changes exist.
@@ -142,8 +124,8 @@ var (
 	// HelpKey renders a single key name inside a help line — bold primary
 	// so the eye locks onto "ENTER" or "ESC" quickly.
 	HelpKey = lipgloss.NewStyle().
-			Foreground(lipgloss.Color(colorPrimary)).
-			Bold(true)
+		Foreground(lipgloss.Color(colorPrimary)).
+		Bold(true)
 
 	// StatusBarStyle renders the persistent bottom status bar. A subtle dark
 	// background anchors the bar visually without competing with content.
