@@ -1,0 +1,17 @@
+{
+  // JSONC must participate in the same runtime catalog flow.
+  "$schema": "https://opencode.ai/config.json",
+  "model": "global/default",
+  "agent": {
+    "inline-agent": {
+      "mode": "primary",
+      "model": "inline/model",
+      "temperature": 0.8,
+      "prompt": "must remain unchanged",
+    },
+    "fallback-only": {
+      "mode": "subagent",
+      "model": "static/only",
+    },
+  },
+}

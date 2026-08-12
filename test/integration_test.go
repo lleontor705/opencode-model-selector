@@ -39,6 +39,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/lleontor705/opencode-model-selector/internal/agentcatalog"
 	"github.com/lleontor705/opencode-model-selector/internal/appname"
 	"github.com/lleontor705/opencode-model-selector/internal/config"
 	"github.com/lleontor705/opencode-model-selector/internal/opencode"
@@ -128,11 +129,9 @@ func countBackups(t *testing.T, dir string) int {
 // to observe state from outside the tui package (state/cursor/dirty are
 // unexported), and it doubles as an end-to-end rendering check.
 const (
-	screenMarkerAgentList      = appname.Name // viewAgentList header (also requires "Primary Agents")
-	screenMarkerAgentDetail    = "Agent: "                 // viewAgentDetail header
-	screenMarkerModelSelection = "Select Model"            // viewModelSelection title
-	screenMarkerFieldInput     = "Edit: "                  // viewFieldInput header
-	screenMarkerSaveConfirm    = "Review changes"          // viewSaveConfirm title
+	screenMarkerAgentList      = appname.Name     // viewAgentList header (also requires "Primary Agents")
+	screenMarkerModelSelection = "Select Model"   // viewModelSelection title
+	screenMarkerSaveConfirm    = "Review changes" // viewSaveConfirm title
 )
 
 // onAgentList reports whether the model is currently rendering the Agent List
@@ -142,20 +141,9 @@ func onAgentList(m tea.Model) bool {
 		strings.Contains(m.View(), "Primary Agents")
 }
 
-// onAgentDetail reports whether the model is on the Agent Detail screen.
-func onAgentDetail(m tea.Model) bool {
-	return strings.Contains(m.View(), screenMarkerAgentDetail) &&
-		strings.Contains(m.View(), "Editable Fields")
-}
-
 // onModelSelection reports whether the model is on the Model Selection screen.
 func onModelSelection(m tea.Model) bool {
 	return strings.Contains(m.View(), screenMarkerModelSelection)
-}
-
-// onFieldInput reports whether the model is on the Field Input screen.
-func onFieldInput(m tea.Model) bool {
-	return strings.Contains(m.View(), screenMarkerFieldInput)
 }
 
 // onSaveConfirm reports whether the model is on the Save Confirm screen.
@@ -679,11 +667,9 @@ func TestIntegration_TUI_InitialScreenIsAgentList(t *testing.T) {
 		"freshly constructed TUI must render the Agent List screen")
 }
 
-// TestIntegration_TUI_AgentListToAgentDetail verifies that ENTER on a
-// selectable agent transitions from AgentList to AgentDetail.
-//
-// Spec: REQ-TUI-008 — Scenario: ENTER transitions to AgentDetail.
-func TestIntegration_TUI_AgentListToAgentDetail(t *testing.T) {
+// TestIntegration_TUI_AgentListToModelSelection verifies the post-T10
+// model-only navigation: ENTER on an agent opens the model picker directly.
+func TestIntegration_TUI_AgentListToModelSelection(t *testing.T) {
 	m := newTUI(t)
 	require.True(t, onAgentList(m), "precondition: must start on AgentList")
 
@@ -693,10 +679,9 @@ func TestIntegration_TUI_AgentListToAgentDetail(t *testing.T) {
 	//   security-auditor, team-lead] — build is disabled so skipped.
 	m = pressKey(m, keyRune('j'))
 
-	// ENTER on an agent transitions to AgentDetail.
 	m = pressKey(m, tea.KeyMsg{Type: tea.KeyEnter})
-	assert.True(t, onAgentDetail(m),
-		"ENTER on an agent must transition to AgentDetail screen")
+	assert.True(t, onModelSelection(m),
+		"ENTER on an agent must transition directly to ModelSelection")
 }
 
 // TestIntegration_TUI_AgentListToGlobalModelSelection verifies that ENTER on
@@ -713,75 +698,21 @@ func TestIntegration_TUI_AgentListToGlobalModelSelection(t *testing.T) {
 		"ENTER on global must transition to ModelSelection screen")
 }
 
-// TestIntegration_TUI_AgentDetailToModelSelection verifies the navigation
-// from AgentDetail → ModelSelection when ENTER is pressed on the model field.
-//
-// Spec: REQ-TUI-008 — Scenario: ENTER on model field opens model picker.
-func TestIntegration_TUI_AgentDetailToModelSelection(t *testing.T) {
-	m := newTUI(t)
-
-	// Navigate: AgentList → (j) → AgentList cursor on agent → ENTER → AgentDetail.
-	m = pressKey(m, keyRune('j'))
-	m = pressKey(m, tea.KeyMsg{Type: tea.KeyEnter})
-	require.True(t, onAgentDetail(m), "precondition: must be on AgentDetail")
-
-	// selectedField starts at 0 = "model". ENTER opens ModelSelection.
-	m = pressKey(m, tea.KeyMsg{Type: tea.KeyEnter})
-	assert.True(t, onModelSelection(m),
-		"ENTER on model field must transition to ModelSelection")
-}
-
-// TestIntegration_TUI_AgentDetailToFieldInput verifies the navigation from
-// AgentDetail → FieldInput when ENTER is pressed on a non-model text field
-// (temperature, top_p, color, steps).
-//
-// Spec: REQ-TUI-008 — Scenario: ENTER on text field opens field input.
-func TestIntegration_TUI_AgentDetailToFieldInput(t *testing.T) {
-	m := newTUI(t)
-
-	// Navigate to AgentDetail.
-	m = pressKey(m, keyRune('j'))
-	m = pressKey(m, tea.KeyMsg{Type: tea.KeyEnter})
-	require.True(t, onAgentDetail(m))
-
-	// Move selectedField down to "temperature" (index 1) and ENTER.
-	m = pressKey(m, keyRune('j'))
-	m = pressKey(m, tea.KeyMsg{Type: tea.KeyEnter})
-	assert.True(t, onFieldInput(m),
-		"ENTER on temperature field must transition to FieldInput")
-}
-
 // TestIntegration_TUI_ModelSelectionBackViaESC verifies that ESC from
 // ModelSelection returns to the previous screen.
 //
 // Spec: REQ-TUI-008 — Scenario: ESC returns to previous screen.
 func TestIntegration_TUI_ModelSelectionBackViaESC(t *testing.T) {
 	m := newTUI(t)
-	// Enter AgentDetail then ModelSelection.
+	// Enter ModelSelection directly from the selected agent.
 	m = pressKey(m, keyRune('j'))
-	m = pressKey(m, tea.KeyMsg{Type: tea.KeyEnter})
 	m = pressKey(m, tea.KeyMsg{Type: tea.KeyEnter})
 	require.True(t, onModelSelection(m), "precondition: must be on ModelSelection")
 
-	// ESC returns to AgentDetail.
-	m = pressKey(m, tea.KeyMsg{Type: tea.KeyEsc})
-	assert.True(t, onAgentDetail(m),
-		"ESC from ModelSelection must return to AgentDetail")
-}
-
-// TestIntegration_TUI_AgentDetailBackViaESC verifies that ESC from
-// AgentDetail returns to AgentList.
-//
-// Spec: REQ-TUI-008 — Scenario: ESC pops the navigation stack.
-func TestIntegration_TUI_AgentDetailBackViaESC(t *testing.T) {
-	m := newTUI(t)
-	m = pressKey(m, keyRune('j'))
-	m = pressKey(m, tea.KeyMsg{Type: tea.KeyEnter})
-	require.True(t, onAgentDetail(m))
-
+	// ESC returns to AgentList; AgentDetail no longer exists.
 	m = pressKey(m, tea.KeyMsg{Type: tea.KeyEsc})
 	assert.True(t, onAgentList(m),
-		"ESC from AgentDetail must return to AgentList")
+		"ESC from ModelSelection must return to AgentList")
 }
 
 // TestIntegration_TUI_SaveTransitionRequiresDirty verifies that 's' only
@@ -832,26 +763,9 @@ func TestIntegration_TUI_CtrlCAlwaysQuits(t *testing.T) {
 			setup: func(t *testing.T, m tea.Model) tea.Model { return m },
 		},
 		{
-			name: "from AgentDetail",
-			setup: func(t *testing.T, m tea.Model) tea.Model {
-				m = pressKey(m, keyRune('j'))
-				return pressKey(m, tea.KeyMsg{Type: tea.KeyEnter})
-			},
-		},
-		{
 			name: "from ModelSelection",
 			setup: func(t *testing.T, m tea.Model) tea.Model {
 				m = pressKey(m, keyRune('j'))
-				m = pressKey(m, tea.KeyMsg{Type: tea.KeyEnter})
-				return pressKey(m, tea.KeyMsg{Type: tea.KeyEnter})
-			},
-		},
-		{
-			name: "from FieldInput",
-			setup: func(t *testing.T, m tea.Model) tea.Model {
-				m = pressKey(m, keyRune('j'))
-				m = pressKey(m, tea.KeyMsg{Type: tea.KeyEnter})
-				m = pressKey(m, keyRune('j')) // cursor to temperature
 				return pressKey(m, tea.KeyMsg{Type: tea.KeyEnter})
 			},
 		},
@@ -940,16 +854,48 @@ func TestIntegration_TUI_DisabledAgentNotSelectable(t *testing.T) {
 
 	// Press 'j' once from global (cursor 0). The cursor must land on 'plan',
 	// NOT on the disabled 'build'. We verify by pressing ENTER and checking
-	// the AgentDetail header shows 'plan'.
+	// selecting a model must update plan and must not update disabled build.
 	m = pressKey(m, keyRune('j'))
 	m = pressKey(m, tea.KeyMsg{Type: tea.KeyEnter})
-	require.True(t, onAgentDetail(m))
+	require.True(t, onModelSelection(m))
+}
 
-	view := m.View()
-	assert.Contains(t, view, "Agent: plan",
-		"first 'j' from global must land on 'plan' (build is disabled and skipped)")
-	assert.NotContains(t, view, "Agent: build",
-		"disabled agent 'build' must not be reachable via cursor navigation")
+// TestIntegration_TUI_ModelOnlyWritePreservesMarkdownAndOtherJSONFields covers
+// the post-T10/T12 edit and save path through the public Bubble Tea boundary.
+func TestIntegration_TUI_ModelOnlyWritePreservesMarkdownAndOtherJSONFields(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "opencode.json")
+	original := `{"agent":{"markdown-agent":{"temperature":0.7,"prompt":"keep"}}}`
+	require.NoError(t, os.WriteFile(configPath, []byte(original), 0o600))
+	markdownPath := filepath.Join(dir, "markdown-agent.md")
+	markdown := "---\nmode: subagent\nmodel: old/markdown\n---\nImmutable body\n"
+	require.NoError(t, os.WriteFile(markdownPath, []byte(markdown), 0o600))
+
+	cfg, err := config.LoadConfig(configPath)
+	require.NoError(t, err)
+	catalog := agentcatalog.Catalog{Buckets: agentcatalog.Classify([]agentcatalog.AgentRecord{{
+		Name: "markdown-agent", Role: agentcatalog.RoleSubagent, Model: "old/markdown",
+	}})}
+	grouped := opencode.GroupByProvider([]opencode.Model{{Provider: "new", ID: "model", FullName: "new/model"}})
+	var m tea.Model = tui.NewModelWithCatalog(cfg, grouped, 0, catalog)
+	m = pressKey(m, keyRune('j'))                   // global -> markdown-agent
+	m = pressKey(m, tea.KeyMsg{Type: tea.KeyEnter}) // direct model picker
+	require.True(t, onModelSelection(m))
+	m = pressKey(m, tea.KeyMsg{Type: tea.KeyEnter}) // select only model
+	m = pressKey(m, keyRune('s'))
+	require.True(t, onSaveConfirm(m))
+	m = pressKey(m, tea.KeyMsg{Type: tea.KeyEnter}) // persist
+
+	reloaded, err := config.LoadConfig(configPath)
+	require.NoError(t, err)
+	model, ok := reloaded.GetAgentField("markdown-agent", "model")
+	require.True(t, ok)
+	assert.Equal(t, "new/model", model)
+	assert.Equal(t, float64(0.7), reloaded.Data()["agent"].(map[string]interface{})["markdown-agent"].(map[string]interface{})["temperature"])
+	assert.Equal(t, "keep", reloaded.Data()["agent"].(map[string]interface{})["markdown-agent"].(map[string]interface{})["prompt"])
+	mdAfter, err := os.ReadFile(markdownPath)
+	require.NoError(t, err)
+	assert.Equal(t, markdown, string(mdAfter), "markdown source must remain byte-for-byte immutable")
 }
 
 // ---------------------------------------------------------------------------
@@ -1031,57 +977,68 @@ func TestIntegration_AtomicSaveFailure_NoLeftoverTempFile(t *testing.T) {
 // Spec: REQ-CMD-003 — Scenario: list-agents output format.
 func TestIntegration_CLI_ListAgentsProducesExpectedOutput(t *testing.T) {
 	binary := buildBinary(t)
+	fake := buildFakeOpenCode(t)
 	configPath := filepath.Join(fixtureDir(t), "opencode.json")
 
-	output := runBinary(t, binary, "--config", configPath, "--list-agents")
-
-	// Header and global default model line.
-	assert.Contains(t, output, "OpenCode Agents",
-		"output must contain the header")
-	assert.Contains(t, output, "Global Default Model:",
-		"output must contain the global default model line")
-
-	// Section headers.
-	assert.Contains(t, output, "Primary Agents",
-		"output must contain the Primary Agents section header")
-	assert.Contains(t, output, "Subagents",
-		"output must contain the Subagents section header")
-
-	// Non-system agents must appear.
-	for _, name := range []string{
-		"plan", "build", "code-reviewer", "debug", "docs", "explore",
-		"general", "orchestrator", "parallel-dispatch", "security-auditor",
-		"team-lead",
-	} {
-		assert.Contains(t, output, name,
-			"non-system agent %q must appear in list-agents output", name)
+	stdout, stderr, exitCode := runBinaryFullInDir(t, binary, projectRoot(t), testEnv(map[string]string{
+		"PATH":                           filepath.Dir(fake),
+		"FAKE_OPENCODE_EXPECT_DIRECTORY": projectRoot(t),
+		"FAKE_OPENCODE_AGENTS_FILE":      filepath.Join(t.TempDir(), "missing.json"),
+	}), "--config", configPath, "--list-agents")
+	require.Zero(t, exitCode)
+	assert.Equal(t, "Warning: runtime agent discovery failed; using static catalog\n", stderr)
+	assert.Equal(t, "section\tname\tmode\tmodel\tstatus", strings.TrimSpace(strings.Split(stdout, "\n")[0]))
+	assert.Contains(t, stdout, "Subagent\tcode-reviewer\tsubagent\tanthropic/claude-sonnet-4-20250514\tdegraded")
+	for _, obsolete := range []string{"OpenCode Agents", "Global Default Model", "temperature:", "top_p:", "color:", "steps:", "disable:", "[DISABLED]"} {
+		assert.NotContains(t, stdout, obsolete, "CLI catalog must remain concise")
 	}
+}
 
-	// System agents must NOT appear.
-	for _, name := range []string{"compactación", "title", "summary"} {
-		assert.NotContains(t, output, name,
-			"system agent %q must NOT appear in list-agents output", name)
+func TestIntegration_CLI_RuntimeCatalogSuccessEndToEnd(t *testing.T) {
+	binary := buildBinary(t)
+	fake := buildFakeOpenCode(t)
+	runtimeFixture := filepath.Join(projectRoot(t), "testdata", "runtime", "catalog-agents.json")
+
+	for _, configName := range []string{"runtime-catalog.json", "runtime-catalog.jsonc"} {
+		t.Run(configName, func(t *testing.T) {
+			work := t.TempDir()
+			configPath := filepath.Join(work, configName)
+			source, err := os.ReadFile(filepath.Join(projectRoot(t), "testdata", "config", configName))
+			require.NoError(t, err)
+			require.NoError(t, os.WriteFile(configPath, source, 0o600))
+			projectAgents := filepath.Join(work, ".opencode", "agents")
+			require.NoError(t, os.MkdirAll(projectAgents, 0o700))
+			require.NoError(t, os.WriteFile(filepath.Join(projectAgents, "project-agent.md"), []byte("---\nmodel: project/model\n---\nproject\n"), 0o600))
+			home := t.TempDir()
+			globalAgents := filepath.Join(home, ".config", "opencode", "agents")
+			require.NoError(t, os.MkdirAll(globalAgents, 0o700))
+			require.NoError(t, os.WriteFile(filepath.Join(globalAgents, "global-agent.md"), []byte("---\nmodel: global-agent/model\n---\nglobal\n"), 0o600))
+
+			stdout, stderr, exitCode := runBinaryFullInDir(t, binary, work, testEnv(map[string]string{
+				"PATH":                           filepath.Dir(fake),
+				"HOME":                           home,
+				"USERPROFILE":                    home,
+				"FAKE_OPENCODE_EXPECT_DIRECTORY": work,
+				"FAKE_OPENCODE_AGENTS_FILE":      runtimeFixture,
+			}), "--config", configPath, "--list-agents")
+			require.Equal(t, 0, exitCode, "stderr: %s", stderr)
+			assert.Empty(t, stderr)
+			assert.Equal(t, 1, strings.Count(stdout, "\nAll\tall-agent\t"))
+			assert.Equal(t, 1, strings.Count(stdout, "\nAll\tmissing-mode\t"))
+			assert.Equal(t, 1, strings.Count(stdout, "\nPrimary\tduplicate\t"), "duplicate runtime names appear once")
+			assert.Contains(t, stdout, "Primary\tnative-visible\tprimary\tglobal/default\tnative")
+			assert.NotContains(t, stdout, "native-hidden")
+			assert.Contains(t, stdout, "Subagent\tcustom-hidden\tsubagent\tglobal/default\thidden(custom)")
+			assert.Contains(t, stdout, "Subagent\tinline-agent\tsubagent\tinline/model\tcustom")
+			assert.Contains(t, stdout, "Subagent\tproject-agent\tsubagent\tproject/model\tcustom")
+			assert.Contains(t, stdout, "Subagent\tglobal-agent\tsubagent\tglobal-agent/model\tcustom")
+			assert.Contains(t, stdout, "All\tfallback-agent\tall\tglobal/default\tcustom")
+			assert.NotContains(t, stdout, "fallback-only", "runtime success must not mix static-only identities")
+			for _, obsolete := range []string{"temperature", "prompt", "description", "Global Default Model"} {
+				assert.NotContains(t, stdout, obsolete)
+			}
+		})
 	}
-
-	// Field labels for all 6 editable fields.
-	for _, field := range []string{"model:", "temperature:", "top_p:", "color:", "steps:", "disable:"} {
-		assert.Contains(t, output, field,
-			"field label %q must appear for every agent", field)
-	}
-
-	// Known model value on code-reviewer.
-	assert.Contains(t, output, "anthropic/claude-sonnet-4-20250514",
-		"code-reviewer's model must appear")
-
-	// Known temperature value on plan.
-	assert.Contains(t, output, "0.4",
-		"plan's temperature (0.4) must appear")
-
-	// Markers for disabled and hidden agents.
-	assert.Contains(t, output, "[DISABLED]",
-		"disabled agent (build) must carry [DISABLED]")
-	assert.Contains(t, output, "parallel-dispatch [H]",
-		"hidden agent (parallel-dispatch) must carry [H]")
 }
 
 // TestIntegration_CLI_ListAgentsMissingConfigReturnsNonZero verifies the CLI
@@ -1124,8 +1081,8 @@ func TestIntegration_CLI_BackupCountFlagAccepted(t *testing.T) {
 
 	require.Equal(t, 0, exitCode,
 		"valid invocation with --backup-count must succeed, stderr: %q", stderr)
-	assert.Contains(t, output, "OpenCode Agents",
-		"output must still contain the header with --backup-count present")
+	assert.Contains(t, output, "section\tname\tmode\tmodel\tstatus",
+		"output must retain concise catalog columns with --backup-count present")
 }
 
 // ---------------------------------------------------------------------------
@@ -1165,6 +1122,18 @@ func buildBinary(t *testing.T) string {
 	return binaryPath
 }
 
+func buildFakeOpenCode(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	// The production probe executes the literal name "opencode".
+	path := filepath.Join(dir, "opencode"+binaryExt())
+	cmd := exec.Command("go", "build", "-o", path, "./testdata/fake-opencode")
+	cmd.Dir = projectRoot(t)
+	out, err := cmd.CombinedOutput()
+	require.NoError(t, err, "build fake opencode: %s", out)
+	return path
+}
+
 // runBinary runs the binary with the given args and returns stdout. It fails
 // the test if the exit code is non-zero OR if stderr is non-empty (since
 // list-agents on a valid config should produce no stderr).
@@ -1183,8 +1152,31 @@ func runBinary(t *testing.T, binary string, args ...string) string {
 // caller decides based on expectations.
 func runBinaryFull(t *testing.T, binary string, args ...string) (string, string, int) {
 	t.Helper()
+	return runBinaryFullInDir(t, binary, projectRoot(t), nil, args...)
+}
+
+func testEnv(overrides map[string]string) []string {
+	env := os.Environ()
+	for key, value := range overrides {
+		prefix := strings.ToUpper(key) + "="
+		filtered := env[:0]
+		for _, entry := range env {
+			if !strings.HasPrefix(strings.ToUpper(entry), prefix) {
+				filtered = append(filtered, entry)
+			}
+		}
+		env = append(filtered, key+"="+value)
+	}
+	return env
+}
+
+func runBinaryFullInDir(t *testing.T, binary, dir string, env []string, args ...string) (string, string, int) {
+	t.Helper()
 	cmd := exec.Command(binary, args...)
-	cmd.Dir = projectRoot(t)
+	cmd.Dir = dir
+	if env != nil {
+		cmd.Env = env
+	}
 
 	var stdoutBuf, stderrBuf strings.Builder
 	cmd.Stdout = &stdoutBuf

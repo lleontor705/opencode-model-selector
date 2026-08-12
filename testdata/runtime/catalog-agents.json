@@ -1,0 +1,13 @@
+[
+  {"name":"native-visible","mode":"primary","native":true,"hidden":false},
+  {"name":"native-hidden","mode":"primary","native":true,"hidden":true},
+  {"name":"custom-hidden","mode":"subagent","native":false,"hidden":true},
+  {"name":"inline-agent","mode":"subagent","native":false,"hidden":false},
+  {"name":"project-agent","mode":"subagent","native":false,"hidden":false},
+  {"name":"global-agent","mode":"subagent","native":false,"hidden":false},
+  {"name":"fallback-agent","mode":"all","native":false,"hidden":false},
+  {"name":"all-agent","mode":"all","native":false,"hidden":false},
+  {"name":"missing-mode","native":false,"hidden":false},
+  {"name":"duplicate","mode":"primary","native":false,"hidden":false},
+  {"name":"duplicate","mode":"primary","native":false,"hidden":false}
+]
