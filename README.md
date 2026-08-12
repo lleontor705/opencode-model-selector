@@ -21,31 +21,25 @@
 
 ---
 
-> **ocs** — A Go CLI tool for interactively selecting models and editing OpenCode agent configuration via a Bubbletea TUI. (The repo/module is `opencode-model-selector`; the binary is `ocs`.)
+> **ocs** — A model selector for OpenCode's global default and agent models, with a Bubbletea TUI. It is not a generic configuration editor. (The repo/module is `opencode-model-selector`; the binary is `ocs`.)
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │                           ocs                                 │
 ├─────────────────────────────────────────────────────────────┤
 │                                                              │
-│  opencode models ──► Parse ──► Group by Provider             │
-│                                      │                       │
-│                                      ▼                       │
-│  opencode.json ──► Read ──► Agent List (TUI)                │
-│                                      │                       │
-│                                      ▼                       │
-│                    ┌─────────────────┴────────────────┐      │
-│                    │                                  │      │
-│                    ▼                                  ▼      │
-│              Model Selection              Field Input         │
-│              (fuzzy filter)               (temp/top_p/       │
-│                    │                      color/steps)       │
-│                    │                                  │      │
-│                    └──────────────┬───────────────────┘      │
-│                                   │                          │
-│                                   ▼                          │
-│                          Save Confirm                        │
-│                          (backup → write)                    │
+│  opencode models ──► Parse ──► Model Selection              │
+│                                  (fuzzy filter)              │
+│                                         │                    │
+│  temporary loopback `opencode serve` ── GET /agent          │
+│                                         │                    │
+│                                         ▼                    │
+│                         Runtime Agent Catalog                 │
+│                         Primary / Subagent / All              │
+│                                         │                    │
+│                                         ▼                    │
+│                          Save Model Override                  │
+│                          (backup → JSON write)                │
 │                                                              │
 └─────────────────────────────────────────────────────────────┘
 ```
@@ -61,7 +55,7 @@ Manually editing `opencode.json` to assign models to agents is error-prone. You 
 | Safe editing | ❌ Risk of JSON corruption | ✅ Atomic writes + timestamped backups |
 | API key safety | ⚠️ Easy to accidentally expose | ✅ Never logged, 0o600 perms |
 | Cross-platform | ❌ Manual path resolution | ✅ Windows, macOS, Linux |
-| Field preservation | ⚠️ Easy to drop keys | ✅ All unknown fields preserved |
+| Focused changes | ⚠️ Easy to alter unrelated settings | ✅ Writes only model assignments |
 
 ## Quick Start
 
@@ -73,24 +67,29 @@ go install github.com/lleontor705/opencode-model-selector/cmd/ocs@latest
 # Run
 ocs                # interactive TUI
 ocs --list-models  # list available models
-ocs --list-agents  # list agents and config
+ocs --list-agents  # list the agent catalog
 ```
 
-**Prerequisites:** [OpenCode CLI](https://opencode.ai) on your `$PATH`, Go 1.26+.
+**Prerequisites:** [OpenCode CLI](https://opencode.ai) on your `$PATH` for model discovery and the full runtime agent catalog; Go 1.26+ when installing from source. If runtime discovery is unavailable, agent listing falls back to the static configuration catalog with a degraded warning.
 
 For detailed installation instructions, see [INSTALLATION.md](./docs/INSTALLATION.md).
 
 ## Features
 
+- **Model-Only Editing** — changes only the global `model` or an `agent.<name>.model` assignment
 - **Model Detection** — automatically discovers all available models from `opencode models`
+- **Runtime Agent Catalog** — starts a short-lived `opencode serve` bound to loopback and reads `GET /agent`, including native, custom, and plugin-provided runtime agents while excluding hidden native agents
+- **Role Sections** — presents agents as **Primary**, **Subagent**, or **All**
+- **Degraded Fallback** — if runtime discovery fails (including when the OpenCode binary is missing), uses static JSON, global agent Markdown, and project agent Markdown sources and displays a degraded warning
 - **Interactive TUI** — Bubbletea-based terminal UI with fuzzy-filter model selection
-- **6 Editable Fields** — model, temperature, top_p, color, steps, and disable per agent
 - **JSONC Support** — loads `opencode.json` and `opencode.jsonc` (comments and trailing commas allowed on load)
 - **Backup & Restore** — automatic JSON backups before every write (configurable retention)
-- **Cross-Platform** — single Go binary for Linux, macOS, and Windows (no runtime deps)
+- **Cross-Platform** — single Go binary for Linux, macOS, and Windows
 - **CLI Flags** — non-interactive modes for scripting: `--list-models`, `--list-agents`
 
-> **Note on `.jsonc`:** comments are supported on load but are not preserved when the tool saves the config — it writes standard JSON.
+> **Configuration writes:** `ocs` writes only the top-level `model` or `agent.<name>.model` to JSON/JSONC. Agent Markdown files are discovery inputs and remain immutable. JSONC comments are supported on load but are not preserved on save because the file is rewritten as standard JSON.
+
+> **Startup:** runtime discovery starts a temporary local OpenCode server, so startup latency of about 2 seconds may occur. The server accepts only a validated loopback address and is stopped after discovery. On Windows, descendant cleanup is best effort using the current `taskkill /T /F` implementation; this is not a strict child-containment guarantee.
 
 ## CLI Usage
 
@@ -104,7 +103,7 @@ ocs --config /path/to/opencode.json
 # List available models grouped by provider
 ocs --list-models
 
-# List agents with current field values
+# List the runtime agent catalog
 ocs --list-agents
 
 # Control backup retention (0 to disable)
@@ -115,7 +114,7 @@ ocs --backup-count 10
 |------|---------|-------------|
 | `--config` | auto-detected | Override config file path |
 | `--list-models` | `false` | List available models grouped by provider |
-| `--list-agents` | `false` | List agents with current field values |
+| `--list-agents` | `false` | List the agent catalog with name, mode, model, and status columns |
 | `--backup-count` | `5` | Number of backups to retain (0 to disable) |
 
 ## Documentation
@@ -132,21 +131,21 @@ ocs --backup-count 10
 ```
 main.go                 CLI entry point (flag parsing + dispatch)
 internal/
-  config/               Config loading, validation, backup, agent field access
-  opencode/             OpenCode CLI detection, model retrieval, provider grouping
-  tui/                  Bubbletea terminal UI (agent list, model select, field input, save)
+  agentcatalog/         Runtime catalog classification and degraded static fallback
+  config/               Config/model loading, layered resolution, backup, and writes
+  opencode/             Model retrieval and temporary loopback runtime-agent probe
+  tui/                  Bubbletea terminal UI (agent catalog, model selection, save)
 test/                   Integration tests and test fixtures
 ```
 
 ### Data Flow
 
-1. `opencode models` output is parsed into a list of `Model` structs
-2. Models are grouped by provider for the selection UI
-3. `opencode.json` is loaded into a `Config` struct
-4. Agent list screen shows all agents with editable fields
-5. Model selection provides fuzzy filtering across all providers
-6. Field input allows editing temperature, top_p, color, steps, disable
-7. Save confirm creates a backup, then writes the updated JSON
+1. `opencode models` output is grouped by provider for model selection.
+2. A short-lived loopback `opencode serve` process supplies the authoritative catalog through `GET /agent`.
+3. Native, custom, and plugin runtime agents are classified into Primary, Subagent, and All; hidden native agents are excluded.
+4. If that probe fails, static JSON, global Markdown, and project Markdown identities are used with a degraded warning. Effective model precedence remains JSON, then project Markdown, then global Markdown.
+5. Model selection provides fuzzy filtering across all providers.
+6. Save confirmation creates a backup, then writes only the global `model` or selected `agent.<name>.model` override to JSON/JSONC. Markdown files are never modified.
 
 ## Contributing
 

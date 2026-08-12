@@ -66,13 +66,19 @@ ocs --help
 
 ## Prerequisites
 
-- [OpenCode CLI](https://opencode.ai) installed and on your `$PATH` (required for TUI and `--list-models`; `--list-agents` works without it)
+- [OpenCode CLI](https://opencode.ai) installed and on your `$PATH`. It is required for model discovery and the full runtime agent catalog. `ocs` starts a short-lived `opencode serve` process on loopback and calls `GET /agent`; this discovers native, custom, and plugin-provided runtime agents, excludes hidden native agents, and groups the remainder as Primary, Subagent, or All. Startup latency of about 2 seconds may occur.
+- If the OpenCode binary is missing or runtime discovery otherwise fails, agent catalog discovery falls back to static JSON, global agent Markdown, and project agent Markdown data and shows a degraded warning. Interactive model selection and `--list-models` still require OpenCode because they need its model catalog.
 - An OpenCode config file. Both `opencode.json` and `opencode.jsonc` are supported. The default locations (probed in this order) are `~/.config/opencode/opencode.jsonc` and `~/.config/opencode/opencode.json`. If neither exists, the tool defaults to creating `opencode.json` on first save.
 
-  > **Note on JSONC:** `.jsonc` comments and trailing commas are supported on **load** but are **NOT preserved when the tool saves the config** — it writes standard JSON. If you rely on comments, keep them in a version-controlled copy; otherwise they will be lost the first time `ocs` writes the file.
+  `ocs` is a model selector only, not a generic field editor. It writes only the global `model` or `agent.<name>.model` to JSON/JSONC. Global (`~/.config/opencode/agents/*.md`) and project (`<project>/.opencode/agents/*.md`) agent Markdown files are read as fallback configuration and remain immutable.
+
+  > **Note on JSONC:** `.jsonc` comments and trailing commas are supported on **load** but comments are **NOT preserved when the tool saves the config** — it writes standard JSON. If you rely on comments, keep them in a version-controlled copy; otherwise they will be lost the first time `ocs` writes the file.
+
+After installation, `ocs --list-agents` displays the catalog with name, mode, model, and status columns. When fallback is active, status reports the degraded state.
 
 ## Windows Notes
 
 - `go install` is recommended to avoid antivirus false positives on unsigned binaries
 - If using prebuilt binaries, you may need to add an antivirus exclusion
 - The binary is `ocs.exe` (invoked as `ocs` once on your `PATH`); `ocs` is pure Go (CGO disabled) — no C compiler needed
+- Cleanup of the temporary OpenCode server and its descendants is best effort on Windows. The current implementation uses `taskkill /T /F`; it does not claim strict child-process containment.
