@@ -17,6 +17,49 @@ package config
 
 import "sort"
 
+// ModelProvenance identifies the config layer that supplied an effective
+// agent model. It intentionally lives in config so catalog composition can map
+// it without config importing a higher-level catalog package.
+type ModelProvenance string
+
+const (
+	ModelProvenanceNone            ModelProvenance = "none"
+	ModelProvenanceInlineJSON      ModelProvenance = "inline_json"
+	ModelProvenanceProjectMarkdown ModelProvenance = "project_markdown"
+	ModelProvenanceGlobalMarkdown  ModelProvenance = "global_markdown"
+	ModelProvenanceGlobalTopLevel  ModelProvenance = "global_top_level"
+)
+
+// ResolveModel resolves an agent model across config layers. Agent-specific
+// values use inline JSON > project markdown > global markdown precedence. The
+// top-level JSON model is the final global fallback.
+func ResolveModel(agentName string, globalMD, projectMD map[string]MDAgent, inlineJSON map[string]interface{}, globalModel string) (string, ModelProvenance, bool) {
+	if agent, ok := inlineJSON[agentName].(map[string]interface{}); ok {
+		if model, ok := nonEmptyString(agent["model"]); ok {
+			return model, ModelProvenanceInlineJSON, true
+		}
+	}
+	if agent, ok := projectMD[agentName]; ok {
+		if model, ok := nonEmptyString(agent.Raw["model"]); ok {
+			return model, ModelProvenanceProjectMarkdown, true
+		}
+	}
+	if agent, ok := globalMD[agentName]; ok {
+		if model, ok := nonEmptyString(agent.Raw["model"]); ok {
+			return model, ModelProvenanceGlobalMarkdown, true
+		}
+	}
+	if globalModel != "" {
+		return globalModel, ModelProvenanceGlobalTopLevel, true
+	}
+	return "", ModelProvenanceNone, false
+}
+
+func nonEmptyString(value interface{}) (string, bool) {
+	model, ok := value.(string)
+	return model, ok && model != ""
+}
+
 // MergedAgent is the unified, read-oriented representation of an agent after
 // combining the markdown and inline-JSON layers. It is what GetAgents consumes
 // to build its name lists and what the TUI displays.

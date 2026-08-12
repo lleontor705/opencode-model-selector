@@ -183,6 +183,36 @@ func (c *Config) GetGlobalModel() (string, bool) {
 	return model, true
 }
 
+// GetAgentModelOverride returns only the inline-JSON agent model override. It
+// does not resolve markdown or the global model fallback.
+func (c *Config) GetAgentModelOverride(agentName string) (string, bool) {
+	value, ok := c.GetAgentField(agentName, "model")
+	if !ok {
+		return "", false
+	}
+	return nonEmptyString(value)
+}
+
+// SetAgentModelOverride writes only agent.<name>.model through the existing
+// inline-JSON map. Compatibility field setters remain available during caller
+// migration but are not exposed through this model-only method.
+func (c *Config) SetAgentModelOverride(agentName, model string) error {
+	return c.SetAgentField(agentName, "model", model)
+}
+
+// ResolveEffectiveModel returns the effective model for an agent and the layer
+// that supplied it: inline JSON > project markdown > global markdown > global
+// top-level JSON fallback.
+func (c *Config) ResolveEffectiveModel(agentName string) (string, ModelProvenance, bool) {
+	globalMD, projectMD := DiscoverMarkdownAgents(DefaultProjectAgentsDir())
+	globalModel, _ := c.GetGlobalModel()
+	inlineJSON := c.agentMap()
+	if inlineJSON == nil {
+		inlineJSON = map[string]interface{}{}
+	}
+	return ResolveModel(agentName, globalMD, projectMD, inlineJSON, globalModel)
+}
+
 // SetGlobalModel sets the top-level "model" key (REQ-CFG-004).
 func (c *Config) SetGlobalModel(model string) {
 	if c.data == nil {

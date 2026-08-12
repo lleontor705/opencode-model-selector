@@ -490,3 +490,129 @@ func TestGetMergedAgentField_UnknownAgentReturnsFalse(t *testing.T) {
 	assert.False(t, ok)
 	assert.Nil(t, got)
 }
+
+// ---------------------------------------------------------------------------
+// Model-only persistence and effective-resolution facade (T05)
+// ---------------------------------------------------------------------------
+
+func TestModelFacade_GlobalModelSetAndRead(t *testing.T) {
+	cfg := &Config{data: map[string]interface{}{"theme": "dark"}}
+
+	cfg.SetGlobalModel("openai/gpt-5")
+	model, ok := cfg.GetGlobalModel()
+
+	require.True(t, ok)
+	assert.Equal(t, "openai/gpt-5", model)
+	assert.Equal(t, "dark", cfg.data["theme"], "unrelated top-level JSON must survive")
+}
+
+func TestModelFacade_AgentModelOverrideSetAndRead(t *testing.T) {
+	cfg := &Config{data: map[string]interface{}{
+		"agent": map[string]interface{}{
+			"review": map[string]interface{}{"mode": "subagent", "temperature": 0.2},
+		},
+	}}
+
+	require.NoError(t, cfg.SetAgentModelOverride("review", "anthropic/claude-sonnet-4"))
+	model, ok := cfg.GetAgentModelOverride("review")
+
+	require.True(t, ok)
+	assert.Equal(t, "anthropic/claude-sonnet-4", model)
+	agent := cfg.data["agent"].(map[string]interface{})["review"].(map[string]interface{})
+	assert.Equal(t, "subagent", agent["mode"])
+	assert.Equal(t, 0.2, agent["temperature"])
+}
+
+func TestModelFacade_EffectiveModelPrecedenceAndProvenance(t *testing.T) {
+	home := t.TempDir()
+	setHomeEnv(t, home)
+	writeGlobalMD(t, home, "review.md", "---\nmodel: global-md\n---\nGlobal.\n")
+
+	projectRoot := t.TempDir()
+	projectAgents := filepath.Join(projectRoot, ".opencode", "agents")
+	require.NoError(t, os.MkdirAll(projectAgents, 0o755))
+	projectPath := filepath.Join(projectAgents, "review.md")
+	require.NoError(t, os.WriteFile(projectPath, []byte("---\nmodel: project-md\n---\nProject.\n"), 0o644))
+	oldWD, err := os.Getwd()
+	require.NoError(t, err)
+	require.NoError(t, os.Chdir(projectRoot))
+	t.Cleanup(func() { require.NoError(t, os.Chdir(oldWD)) })
+
+	tests := []struct {
+		name       string
+		data       map[string]interface{}
+		wantModel  string
+		wantSource ModelProvenance
+	}{
+		{
+			name: "inline JSON wins",
+			data: map[string]interface{}{
+				"model": "global-json",
+				"agent": map[string]interface{}{"review": map[string]interface{}{"model": "inline-json"}},
+			},
+			wantModel: "inline-json", wantSource: ModelProvenanceInlineJSON,
+		},
+		{
+			name:      "project markdown wins global markdown",
+			data:      map[string]interface{}{"model": "global-json"},
+			wantModel: "project-md", wantSource: ModelProvenanceProjectMarkdown,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := &Config{data: tt.data}
+			model, source, ok := cfg.ResolveEffectiveModel("review")
+			require.True(t, ok)
+			assert.Equal(t, tt.wantModel, model)
+			assert.Equal(t, tt.wantSource, source)
+		})
+	}
+
+	require.NoError(t, os.Remove(projectPath))
+	cfg := &Config{data: map[string]interface{}{"model": "global-json"}}
+	model, source, ok := cfg.ResolveEffectiveModel("review")
+	require.True(t, ok)
+	assert.Equal(t, "global-md", model)
+	assert.Equal(t, ModelProvenanceGlobalMarkdown, source)
+
+	require.NoError(t, os.Remove(filepath.Join(home, ".config", "opencode", "agents", "review.md")))
+	model, source, ok = cfg.ResolveEffectiveModel("review")
+	require.True(t, ok)
+	assert.Equal(t, "global-json", model)
+	assert.Equal(t, ModelProvenanceGlobalTopLevel, source)
+
+	delete(cfg.data, "model")
+	model, source, ok = cfg.ResolveEffectiveModel("review")
+	assert.False(t, ok)
+	assert.Empty(t, model)
+	assert.Equal(t, ModelProvenanceNone, source)
+}
+
+func TestModelFacade_SavePreservesUnrelatedJSONAndMarkdownBytes(t *testing.T) {
+	home := t.TempDir()
+	setHomeEnv(t, home)
+	mdBytes := []byte("---\nmodel: md-model\ntemperature: 0.1\n---\nDo not rewrite.\n")
+	mdPath := writeGlobalMD(t, home, "review.md", string(mdBytes))
+	configPath := filepath.Join(t.TempDir(), "opencode.json")
+	cfg := &Config{path: configPath, data: map[string]interface{}{
+		"model": "old-global",
+		"mcp":   map[string]interface{}{"server": map[string]interface{}{"url": "https://example.invalid"}},
+		"agent": map[string]interface{}{
+			"review": map[string]interface{}{"mode": "subagent", "temperature": 0.4},
+		},
+	}}
+
+	cfg.SetGlobalModel("new-global")
+	require.NoError(t, cfg.SetAgentModelOverride("review", "new-agent"))
+	require.NoError(t, cfg.Save())
+
+	reloaded, err := LoadConfig(configPath)
+	require.NoError(t, err)
+	assert.Equal(t, cfg.data["mcp"], reloaded.data["mcp"])
+	assert.Equal(t, "subagent", reloaded.data["agent"].(map[string]interface{})["review"].(map[string]interface{})["mode"])
+	assert.Equal(t, 0.4, reloaded.data["agent"].(map[string]interface{})["review"].(map[string]interface{})["temperature"])
+	gotMD, err := os.ReadFile(mdPath)
+	require.NoError(t, err)
+	assert.Equal(t, mdBytes, gotMD, "model facade must never rewrite markdown")
+}
