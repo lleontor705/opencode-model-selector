@@ -17,7 +17,78 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/lleontor705/opencode-model-selector/internal/agentcatalog"
 )
+
+func runtimeCatalogForTUI() agentcatalog.Catalog {
+	return agentcatalog.Catalog{
+		Buckets: agentcatalog.Buckets{
+			Primary: []agentcatalog.AgentRecord{
+				{Name: "z-primary", Role: agentcatalog.RolePrimary, Native: true, Model: "runtime/z"},
+				{Name: "a-primary", Role: agentcatalog.RolePrimary, Native: true},
+			},
+			Subagent: []agentcatalog.AgentRecord{
+				{Name: "custom-hidden", Role: agentcatalog.RoleSubagent, Hidden: true, Source: agentcatalog.SourcePlugin},
+				{Name: "a-primary", Role: agentcatalog.RoleSubagent},
+			},
+			All: []agentcatalog.AgentRecord{
+				{Name: "all-role", Role: agentcatalog.RoleAll},
+				{Name: "native-hidden", Role: agentcatalog.RoleAll, Native: true, Hidden: true},
+			},
+		},
+	}
+}
+
+func TestViewAgentList_CatalogSectionsAreExclusiveDeterministicAndComplete(t *testing.T) {
+	m := NewModelWithCatalog(fixtureConfig(t), sampleGrouped(), 5, runtimeCatalogForTUI())
+	out := viewAgentList(m)
+
+	primary := strings.Index(out, "Primary Agents")
+	subagent := strings.Index(out, "Subagents")
+	all := strings.Index(out, "All Agents")
+	require.GreaterOrEqual(t, primary, 0)
+	require.Greater(t, subagent, primary)
+	require.Greater(t, all, subagent)
+	assert.Less(t, strings.Index(out, "a-primary"), strings.Index(out, "z-primary"))
+	assert.Equal(t, 1, strings.Count(out, "a-primary"), "a catalog identity must render in exactly one role section")
+	assert.Equal(t, 1, strings.Count(out, "all-role"))
+	assert.NotContains(t, out, "native-hidden", "native hidden identities are already catalog-filtered")
+}
+
+func TestViewAgentList_CustomHiddenCatalogAgentHasMarker(t *testing.T) {
+	m := NewModelWithCatalog(fixtureConfig(t), sampleGrouped(), 5, runtimeCatalogForTUI())
+	out := viewAgentList(m)
+	hidden := strings.Index(out, "custom-hidden")
+	require.GreaterOrEqual(t, hidden, 0)
+	assert.Contains(t, out[hidden:], "[H]")
+}
+
+func TestViewAgentList_DegradedCatalogWarnsWithoutBlockingNavigation(t *testing.T) {
+	catalog := runtimeCatalogForTUI()
+	catalog.Degraded = true
+	catalog.Diagnostics = []agentcatalog.Diagnostic{{Message: "runtime unavailable; using fallback"}}
+	m := NewModelWithCatalog(fixtureConfig(t), sampleGrouped(), 5, catalog)
+
+	assert.Contains(t, viewAgentList(m), "runtime unavailable; using fallback")
+	items := selectableItems(m)
+	m.agentCursor = indexOf(items, "all-role")
+	require.GreaterOrEqual(t, m.agentCursor, 0)
+	updated, _ := updateAgentList(m, tea.KeyMsg{Type: tea.KeyEnter})
+	assert.Equal(t, ScreenAgentDetail, updated.state)
+	assert.Equal(t, "all-role", updated.selectedAgent)
+}
+
+func TestUpdateAgentList_CatalogNavigationClampsStaleCursor(t *testing.T) {
+	m := NewModelWithCatalog(fixtureConfig(t), sampleGrouped(), 5, agentcatalog.Catalog{})
+	m.agentCursor = 99
+
+	updated, _ := updateAgentList(m, tea.KeyMsg{Type: tea.KeyDown})
+	assert.Equal(t, 0, updated.agentCursor)
+	require.NotPanics(t, func() {
+		_, _ = updateAgentList(updated, tea.KeyMsg{Type: tea.KeyEnter})
+	})
+}
 
 // ---------------------------------------------------------------------------
 // Rendering — viewAgentList (REQ-TUI-002)

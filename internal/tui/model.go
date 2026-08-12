@@ -12,6 +12,7 @@
 package tui
 
 import (
+	"context"
 	"reflect"
 
 	"github.com/charmbracelet/bubbles/textinput"
@@ -19,6 +20,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
+	"github.com/lleontor705/opencode-model-selector/internal/agentcatalog"
 	"github.com/lleontor705/opencode-model-selector/internal/appname"
 	"github.com/lleontor705/opencode-model-selector/internal/config"
 	"github.com/lleontor705/opencode-model-selector/internal/opencode"
@@ -119,7 +121,10 @@ type Model struct {
 
 	primaryAgents  []string
 	subagents      []string
+	allAgents      []string
 	disabledAgents []string
+	agentCatalog   agentcatalog.Catalog
+	catalogByName  map[string]agentcatalog.AgentRecord
 	// mdOnlyAgents is the set of agent names that currently exist ONLY in
 	// markdown (no inline-JSON backing). It is recomputed by NewModel and by
 	// performSave so the [MD] badge stays live: once a JSON override is saved
@@ -194,18 +199,35 @@ type Model struct {
 //
 // Spec: REQ-TUI-001 — Happy path / Edge case / Error — nil config.
 func NewModel(cfg *config.Config, grouped map[string][]opencode.Model, backupCount int) Model {
+	// Live discovery is wired by cmd in T13. Preserve existing callers with a
+	// deterministic, degraded static catalog until that integration lands.
+	var catalog agentcatalog.Catalog
+	if cfg == nil {
+		catalog = agentcatalog.Discovery{}.Discover(context.Background(), "")
+	} else {
+		catalog = agentcatalog.Discovery{Static: cfg}.Discover(context.Background(), "")
+	}
+	return NewModelWithCatalog(cfg, grouped, backupCount, catalog)
+}
+
+// NewModelWithCatalog constructs the TUI from an already discovered catalog.
+// Discovery and process lifecycle concerns intentionally remain outside TUI.
+func NewModelWithCatalog(cfg *config.Config, grouped map[string][]opencode.Model, backupCount int, catalog agentcatalog.Catalog) Model {
 	// Normalize the grouped map so the rest of the code can range over it
 	// unconditionally.
 	if grouped == nil {
 		grouped = map[string][]opencode.Model{}
 	}
 
+	catalog.Buckets = agentcatalog.Classify(catalog.Records())
 	m := Model{
 		state:          ScreenAgentList,
 		config:         cfg,
 		groupedModels:  grouped,
 		editableFields: append([]string(nil), editableFieldSchema...),
 		backupCount:    backupCount,
+		agentCatalog:   catalog,
+		catalogByName:  make(map[string]agentcatalog.AgentRecord),
 	}
 
 	// Flatten the grouped map into a single slice for the fuzzy filter. The
@@ -223,12 +245,22 @@ func NewModel(cfg *config.Config, grouped map[string][]opencode.Model, backupCou
 	m.modelViewport = viewport.New(0, 0)
 	m.saveViewport = viewport.New(0, 0)
 
-	// Populate agent lists from the config when present. GetAgents already
-	// filters out system agents (REQ-CFG-008) so we do not repeat that here.
+	for _, record := range catalog.Buckets.Primary {
+		m.primaryAgents = append(m.primaryAgents, record.Name)
+		m.catalogByName[record.Name] = record
+	}
+	for _, record := range catalog.Buckets.Subagent {
+		m.subagents = append(m.subagents, record.Name)
+		m.catalogByName[record.Name] = record
+	}
+	for _, record := range catalog.Buckets.All {
+		m.allAgents = append(m.allAgents, record.Name)
+		m.catalogByName[record.Name] = record
+	}
+
+	// Editing metadata remains config-backed until action routing changes.
 	if cfg != nil {
-		primary, subagents, disabled := cfg.GetAgents()
-		m.primaryAgents = primary
-		m.subagents = subagents
+		_, _, disabled := cfg.GetAgents()
 		m.disabledAgents = disabled
 		m.mdOnlyAgents = computeMdOnly(cfg)
 	}

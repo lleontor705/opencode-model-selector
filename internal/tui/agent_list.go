@@ -65,7 +65,7 @@ const agentListScreenLabel = "Agents"
 //
 // Spec: REQ-TUI-002 — disabled non-selectable, hidden selectable.
 func selectableItems(m Model) []string {
-	items := make([]string, 0, len(m.primaryAgents)+len(m.subagents)+1)
+	items := make([]string, 0, len(m.primaryAgents)+len(m.subagents)+len(m.allAgents)+1)
 	items = append(items, globalItemKey)
 
 	disabled := make(map[string]bool, len(m.disabledAgents))
@@ -79,6 +79,11 @@ func selectableItems(m Model) []string {
 		}
 	}
 	for _, name := range sortedCopy(m.subagents) {
+		if !disabled[name] {
+			items = append(items, name)
+		}
+	}
+	for _, name := range sortedCopy(m.allAgents) {
 		if !disabled[name] {
 			items = append(items, name)
 		}
@@ -120,6 +125,9 @@ func viewAgentList(m Model) string {
 	if m.width <= 0 || m.height <= 0 {
 		content, _, _ := renderAgentListContent(m)
 		parts := []string{renderHeader(m, "Agents")}
+		if warning := catalogWarning(m); warning != "" {
+			parts = append(parts, ErrorStyle.Render("⚠ "+warning))
+		}
 		if m.saveSuccess {
 			parts = append(parts, SuccessStyle.Render("✓ Saved successfully"))
 		}
@@ -127,11 +135,14 @@ func viewAgentList(m Model) string {
 		if m.quitConfirm {
 			parts = append(parts, ErrorStyle.Render("⚠ You have unsaved changes. Quit anyway? (y/n)"))
 		}
-		return strings.Join(append(parts, agentListHelp(m.width), renderStatusBar(m, agentListScreenLabel, len(m.primaryAgents)+len(m.subagents))), "\n")
+		return strings.Join(append(parts, agentListHelp(m.width), renderStatusBar(m, agentListScreenLabel, agentCount(m))), "\n")
 	}
 
 	syncAgentViewport(&m)
 	parts := []string{renderHeader(m, "Agents")}
+	if warning := catalogWarning(m); warning != "" {
+		parts = append(parts, clipLines(ErrorStyle.Render("⚠ "+warning), m.width))
+	}
 	if m.saveSuccess {
 		parts = append(parts, SuccessStyle.Render("✓ Saved successfully"))
 	}
@@ -140,7 +151,7 @@ func viewAgentList(m Model) string {
 		parts = append(parts, clipLines(ErrorStyle.Render("⚠ You have unsaved changes. Quit anyway? (y/n)"), m.width))
 	}
 	parts = append(parts, agentListHelp(m.width))
-	parts = append(parts, renderStatusBar(m, agentListScreenLabel, len(m.primaryAgents)+len(m.subagents)))
+	parts = append(parts, renderStatusBar(m, agentListScreenLabel, agentCount(m)))
 	return strings.Join(parts, "\n")
 }
 
@@ -156,8 +167,12 @@ func agentListViewportHeight(m Model) int {
 		return 0
 	}
 	fixed := lipgloss.Height(renderHeader(m, "Agents")) + lipgloss.Height(agentListHelp(m.width)) +
-		lipgloss.Height(renderStatusBar(m, agentListScreenLabel, len(m.primaryAgents)+len(m.subagents)))
+		lipgloss.Height(renderStatusBar(m, agentListScreenLabel, agentCount(m)))
 	components := 4 // header, viewport, help, status
+	if catalogWarning(m) != "" {
+		fixed++
+		components++
+	}
 	if m.saveSuccess {
 		fixed++
 		components++
@@ -231,7 +246,29 @@ func renderAgentListContent(m Model) (string, int, int) {
 		}
 		appendBlock(renderAgentRow(m, name, isDisabled, isSelected), isSelected)
 	}
+	appendBlock(SectionHeader.Render("◆ All Agents"), false)
+	for _, name := range sortedCopy(m.allAgents) {
+		isDisabled := disabled[name]
+		isSelected := false
+		if !isDisabled {
+			isSelected = selectableIdx == m.agentCursor
+			selectableIdx++
+		}
+		appendBlock(renderAgentRow(m, name, isDisabled, isSelected), isSelected)
+	}
 	return strings.Join(blocks, "\n"), selectedStart, selectedEnd
+}
+
+func agentCount(m Model) int { return len(m.primaryAgents) + len(m.subagents) + len(m.allAgents) }
+
+func catalogWarning(m Model) string {
+	if !m.agentCatalog.Degraded {
+		return ""
+	}
+	if len(m.agentCatalog.Diagnostics) > 0 && m.agentCatalog.Diagnostics[0].Message != "" {
+		return m.agentCatalog.Diagnostics[0].Message
+	}
+	return "runtime agent discovery unavailable; using static catalog"
 }
 
 // renderGlobalRow renders the Global Default Model entry row.
@@ -268,6 +305,11 @@ var agentListOptionalFields = []string{
 // agent shows its actual md model instead of "(none)". This is DISPLAY only;
 // writes still go through SetAgentField (JSON only).
 func compactFieldValue(m Model, name, field string) string {
+	if field == "model" {
+		if record, ok := m.catalogByName[name]; ok && record.Model != "" {
+			return record.Model
+		}
+	}
 	val, ok := m.config.GetMergedAgentField(name, field)
 	if !ok || val == nil {
 		return "(none)"
@@ -305,7 +347,7 @@ func renderAgentRow(m Model, name string, isDisabled, isSelected bool) string {
 		nameLine += " " + HelpStyle.Render("[MD]")
 	}
 	// Append indicator for hidden agents.
-	if m.config.IsAgentHidden(name) {
+	if isAgentHidden(m, name) {
 		nameLine += " " + HelpStyle.Render("[H]")
 	}
 	// Append indicator for disabled agents.
@@ -332,11 +374,18 @@ func renderAgentRow(m Model, name string, isDisabled, isSelected bool) string {
 		return AgentDisabled.Render(content)
 	case isSelected:
 		return SelectedStyle.Render(content)
-	case m.config.IsAgentHidden(name):
+	case isAgentHidden(m, name):
 		return AgentHidden.Render(content)
 	default:
 		return AgentNormal.Render(content)
 	}
+}
+
+func isAgentHidden(m Model, name string) bool {
+	if record, ok := m.catalogByName[name]; ok && record.Hidden {
+		return true
+	}
+	return m.config != nil && m.config.IsAgentHidden(name)
 }
 
 func configuredFieldValue(m Model, name, field string) (string, bool) {
@@ -447,6 +496,7 @@ func updateAgentList(m Model, msg tea.KeyMsg) (Model, tea.Cmd) {
 	case (msg.Type == tea.KeyRunes && len(msg.Runes) == 1 && msg.Runes[0] == 'j') ||
 		msg.Type == tea.KeyDown:
 		items := selectableItems(m)
+		m.agentCursor = clampAgentCursor(m.agentCursor, len(items))
 		if len(items) > 0 && m.agentCursor < len(items)-1 {
 			m.agentCursor++
 		}
@@ -456,6 +506,7 @@ func updateAgentList(m Model, msg tea.KeyMsg) (Model, tea.Cmd) {
 	// --- Cursor up ---
 	case (msg.Type == tea.KeyRunes && len(msg.Runes) == 1 && msg.Runes[0] == 'k') ||
 		msg.Type == tea.KeyUp:
+		m.agentCursor = clampAgentCursor(m.agentCursor, len(selectableItems(m)))
 		if m.agentCursor > 0 {
 			m.agentCursor--
 		}
@@ -465,6 +516,7 @@ func updateAgentList(m Model, msg tea.KeyMsg) (Model, tea.Cmd) {
 	// --- ENTER: transition ---
 	case msg.Type == tea.KeyEnter:
 		items := selectableItems(m)
+		m.agentCursor = clampAgentCursor(m.agentCursor, len(items))
 		if m.agentCursor >= 0 && m.agentCursor < len(items) {
 			item := items[m.agentCursor]
 			if item == globalItemKey {
@@ -472,11 +524,11 @@ func updateAgentList(m Model, msg tea.KeyMsg) (Model, tea.Cmd) {
 				m.fieldEditing = "global"
 				m.quitConfirm = false
 				initModelSelectionScreen(&m)
-	} else {
-		m.selectedAgent = item
-		m.pushScreen(ScreenAgentDetail)
-		m.quitConfirm = false
-	}
+			} else {
+				m.selectedAgent = item
+				m.pushScreen(ScreenAgentDetail)
+				m.quitConfirm = false
+			}
 		}
 		return m, nil
 
@@ -484,6 +536,16 @@ func updateAgentList(m Model, msg tea.KeyMsg) (Model, tea.Cmd) {
 	default:
 		return m, nil
 	}
+}
+
+func clampAgentCursor(cursor, itemCount int) int {
+	if itemCount <= 0 || cursor < 0 {
+		return 0
+	}
+	if cursor >= itemCount {
+		return itemCount - 1
+	}
+	return cursor
 }
 
 // sortedCopy returns a sorted copy of the input slice. The original slice is
