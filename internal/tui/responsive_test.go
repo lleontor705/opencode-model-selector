@@ -72,7 +72,7 @@ func TestView_FooterRemainsVisibleAtMinimumSupportedHeight(t *testing.T) {
 
 	out := m.View()
 	assert.LessOrEqual(t, renderedLineCount(out), minTerminalHeight)
-	assert.Contains(t, out, "Enter Edit · A All · M · S Save · Q Quit")
+	assert.Contains(t, out, "Enter Model · A · M · S Save · Q Quit")
 	assert.Contains(t, out, agentListScreenLabel)
 }
 
@@ -119,8 +119,8 @@ func TestView_HelpFootersFitSupportedWidthsAndKeepCriticalActions(t *testing.T) 
 		{
 			name:        "agent list",
 			model:       func(t *testing.T) Model { return NewModel(fixtureConfig(t), sampleGrouped(), 5) },
-			compactHelp: "Enter Edit · A All · M · S Save · Q Quit",
-			fullHelp:    "Enter Edit · A Apply-all · M Multi · S Review & Save · Q Quit",
+			compactHelp: "Enter Model · A · M · S Save · Q Quit",
+			fullHelp:    "Enter Model · A Apply-all · M Multi · S Review & Save · Q Quit",
 		},
 		{
 			name: "agent detail",

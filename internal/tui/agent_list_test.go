@@ -75,7 +75,7 @@ func TestViewAgentList_DegradedCatalogWarnsWithoutBlockingNavigation(t *testing.
 	m.agentCursor = indexOf(items, "all-role")
 	require.GreaterOrEqual(t, m.agentCursor, 0)
 	updated, _ := updateAgentList(m, tea.KeyMsg{Type: tea.KeyEnter})
-	assert.Equal(t, ScreenAgentDetail, updated.state)
+	assert.Equal(t, ScreenModelSelection, updated.state)
 	assert.Equal(t, "all-role", updated.selectedAgent)
 }
 
@@ -88,6 +88,49 @@ func TestUpdateAgentList_CatalogNavigationClampsStaleCursor(t *testing.T) {
 	require.NotPanics(t, func() {
 		_, _ = updateAgentList(updated, tea.KeyMsg{Type: tea.KeyEnter})
 	})
+}
+
+func TestT10AgentList_AllModelFlowsReachableWithoutGenericEditor(t *testing.T) {
+	m := NewModelWithCatalog(fixtureConfig(t), richGrouped(), 5, runtimeCatalogForTUI())
+
+	for _, tc := range []struct {
+		name      string
+		item      string
+		key       tea.KeyMsg
+		wantState appState
+		wantEdit  string
+	}{
+		{name: "global", item: globalItemKey, key: tea.KeyMsg{Type: tea.KeyEnter}, wantState: ScreenModelSelection, wantEdit: "global"},
+		{name: "runtime primary", item: "z-primary", key: tea.KeyMsg{Type: tea.KeyEnter}, wantState: ScreenModelSelection, wantEdit: "z-primary"},
+		{name: "all role", item: "all-role", key: tea.KeyMsg{Type: tea.KeyEnter}, wantState: ScreenModelSelection, wantEdit: "all-role"},
+		{name: "bulk all", key: tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}}, wantState: ScreenModelSelection, wantEdit: fieldEditingBulkAll},
+		{name: "multi select", key: tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'m'}}, wantState: ScreenAgentMultiSelect},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			candidate := m
+			if tc.item != "" {
+				candidate.agentCursor = indexOf(selectableItems(candidate), tc.item)
+				require.GreaterOrEqual(t, candidate.agentCursor, 0)
+			}
+			updated, _ := updateAgentList(candidate, tc.key)
+			assert.Equal(t, tc.wantState, updated.state)
+			assert.NotEqual(t, ScreenAgentDetail, updated.state)
+			assert.NotEqual(t, ScreenFieldInput, updated.state)
+			if tc.wantEdit != "" {
+				assert.Equal(t, tc.wantEdit, updated.fieldEditing)
+			}
+		})
+	}
+}
+
+func TestT10MultiSelectUsesUniqueCatalogNamesIncludingAllRole(t *testing.T) {
+	m := NewModelWithCatalog(fixtureConfig(t), richGrouped(), 5, runtimeCatalogForTUI())
+	updated, _ := updateAgentList(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'m'}})
+
+	assert.Contains(t, updated.multiSelectItems, "z-primary")
+	assert.Contains(t, updated.multiSelectItems, "custom-hidden")
+	assert.Contains(t, updated.multiSelectItems, "all-role")
+	assert.Equal(t, 1, strings.Count(strings.Join(updated.multiSelectItems, "\n"), "a-primary"))
 }
 
 // ---------------------------------------------------------------------------
@@ -430,19 +473,19 @@ func TestUpdateAgentList_EnterOnGlobal_TransitionsToModelSelection(t *testing.T)
 		"ENTER on global MUST transition to ScreenModelSelection")
 }
 
-// TestUpdateAgentList_EnterOnAgent_TransitionsToAgentDetail verifies that
-// pressing ENTER on an agent transitions to the Agent Detail screen and sets
+// TestUpdateAgentList_EnterOnAgent_TransitionsToModelSelection verifies that
+// pressing ENTER on an agent transitions directly to model selection and sets
 // selectedAgent.
 //
 // Spec: REQ-TUI-003 — Happy path — ENTER on agent opens detail.
-func TestUpdateAgentList_EnterOnAgent_TransitionsToAgentDetail(t *testing.T) {
+func TestUpdateAgentList_EnterOnAgent_TransitionsToModelSelection(t *testing.T) {
 	m := NewModel(fixtureConfig(t), sampleGrouped(), 5)
 	// cursor 1 = "plan" (first non-disabled primary agent)
 	m.agentCursor = 1
 
 	newM, _ := updateAgentList(m, tea.KeyMsg{Type: tea.KeyEnter})
-	assert.Equal(t, ScreenAgentDetail, newM.state,
-		"ENTER on an agent MUST transition to ScreenAgentDetail")
+	assert.Equal(t, ScreenModelSelection, newM.state,
+		"ENTER on an agent MUST transition directly to ScreenModelSelection")
 	assert.Equal(t, "plan", newM.selectedAgent,
 		"selectedAgent MUST be set to the agent at the cursor position")
 }
@@ -701,12 +744,12 @@ func TestUpdateAgentList_CancelThenEnter_TransitionsCleanly(t *testing.T) {
 	m2, _ := updateAgentList(m1, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
 	require.False(t, m2.quitConfirm, "step 2: quitConfirm must be cleared")
 
-	// Step 3: ENTER → transitions to AgentDetail, quitConfirm still false
+	// Step 3: ENTER → transitions directly to model selection.
 	m3, _ := updateAgentList(m2, tea.KeyMsg{Type: tea.KeyEnter})
-	assert.Equal(t, ScreenAgentDetail, m3.state,
+	assert.Equal(t, ScreenModelSelection, m3.state,
 		"ENTER after canceling quit MUST transition normally")
 	assert.False(t, m3.quitConfirm,
-		"quitConfirm MUST be false after transitioning to AgentDetail")
+		"quitConfirm MUST be false after transitioning to model selection")
 }
 
 // ---------------------------------------------------------------------------

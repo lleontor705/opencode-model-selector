@@ -23,6 +23,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/lleontor705/opencode-model-selector/internal/agentcatalog"
 	"github.com/lleontor705/opencode-model-selector/internal/opencode"
 )
 
@@ -517,13 +518,13 @@ func TestUpdateModelSelection_EnterOnGlobal_SetsGlobalModel(t *testing.T) {
 // to previousState.
 func TestUpdateModelSelection_EnterOnAgent_SetsAgentModel(t *testing.T) {
 	m := newModelSelectModel(t, "model", "code-reviewer")
-	m.navigationStack = []appState{ScreenAgentDetail}
+	m.navigationStack = []appState{ScreenAgentList}
 	require.False(t, m.dirty)
 
 	newM, _ := updateModelSelection(m, tea.KeyMsg{Type: tea.KeyEnter})
 
-	assert.Equal(t, ScreenAgentDetail, newM.state,
-		"ENTER MUST return to previousState (ScreenAgentDetail)")
+	assert.Equal(t, ScreenAgentList, newM.state,
+		"ENTER MUST return directly to ScreenAgentList")
 
 	val, ok := newM.config.GetAgentField("code-reviewer", "model")
 	require.True(t, ok, "the agent model MUST be set after ENTER")
@@ -924,5 +925,28 @@ func TestSelectModelAtCursor_BulkAll_IdempotentNoSecondChange(t *testing.T) {
 	for _, ch := range result.changes {
 		assert.NotEqual(t, "code-reviewer", ch.Target,
 			"agent already on target model MUST NOT produce a Change")
+	}
+}
+
+func TestT10BulkModelWritesDeduplicateCatalogNamesAndIncludeAllRole(t *testing.T) {
+	catalog := runtimeCatalogForTUI()
+	catalog.Buckets.All = append(catalog.Buckets.All,
+		agentcatalog.AgentRecord{Name: "z-primary", Role: agentcatalog.RoleAll},
+	)
+	m := NewModelWithCatalog(fixtureConfig(t), richGrouped(), 5, catalog)
+	m.state = ScreenModelSelection
+	m.navigationStack = []appState{ScreenAgentList}
+	m.fieldEditing = fieldEditingBulkAll
+	initModelSelectionScreen(&m)
+
+	result := selectModelAtCursor(m)
+	counts := map[string]int{}
+	for _, change := range result.changes {
+		counts[change.Target]++
+	}
+	assert.Equal(t, 1, counts["z-primary"])
+	assert.Equal(t, 1, counts["all-role"])
+	for name, count := range counts {
+		assert.Equal(t, 1, count, "catalog name %q must be written once", name)
 	}
 }

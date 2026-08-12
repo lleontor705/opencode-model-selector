@@ -321,14 +321,12 @@ func selectModelAtCursor(m Model) Model {
 		m.RecordChange("global", "model", oldVal, selected.FullName)
 
 	case fieldEditingBulkAll:
-		primary, subagents, _ := m.config.GetAgents()
-		targets := append(append([]string(nil), primary...), subagents...)
-		for _, name := range targets {
-			if m.config.IsAgentDisabled(name) {
+		for _, name := range selectableCatalogNames(m) {
+			oldVal, _, _ := m.config.ResolveEffectiveModel(name)
+			if oldVal == selected.FullName {
 				continue
 			}
-			oldVal, _ := m.config.GetAgentField(name, "model")
-			if err := m.config.SetAgentField(name, "model", selected.FullName); err != nil {
+			if err := m.config.SetAgentModelOverride(name, selected.FullName); err != nil {
 				continue
 			}
 			m.RecordChange(name, "model", oldVal, selected.FullName)
@@ -336,12 +334,20 @@ func selectModelAtCursor(m Model) Model {
 		m.bulkTargets = nil
 
 	case fieldEditingBulkList:
+		seen := make(map[string]struct{}, len(m.bulkTargets))
 		for _, name := range m.bulkTargets {
+			if _, duplicate := seen[name]; duplicate {
+				continue
+			}
+			seen[name] = struct{}{}
 			if m.config.IsAgentDisabled(name) {
 				continue
 			}
-			oldVal, _ := m.config.GetAgentField(name, "model")
-			if err := m.config.SetAgentField(name, "model", selected.FullName); err != nil {
+			oldVal, _, _ := m.config.ResolveEffectiveModel(name)
+			if oldVal == selected.FullName {
+				continue
+			}
+			if err := m.config.SetAgentModelOverride(name, selected.FullName); err != nil {
 				continue
 			}
 			m.RecordChange(name, "model", oldVal, selected.FullName)
@@ -352,8 +358,12 @@ func selectModelAtCursor(m Model) Model {
 		// Capture the previous MERGED model so the save-confirm diff reads
 		// "<md-model> -> <new>" instead of "(none) -> <new>" when overriding
 		// a markdown-backed agent. The WRITE still calls SetAgentField.
-		oldVal, _ := m.config.GetMergedAgentField(m.selectedAgent, "model")
-		_ = m.config.SetAgentField(m.selectedAgent, "model", selected.FullName)
+		oldVal, _, _ := m.config.ResolveEffectiveModel(m.selectedAgent)
+		if oldVal == selected.FullName {
+			m.popScreen()
+			return m
+		}
+		_ = m.config.SetAgentModelOverride(m.selectedAgent, selected.FullName)
 		m.RecordChange(m.selectedAgent, "model", oldVal, selected.FullName)
 	}
 
@@ -362,8 +372,7 @@ func selectModelAtCursor(m Model) Model {
 }
 
 // initModelSelectionScreen resets the filter input, cursor, and filteredModels
-// when entering the Model Selection screen. Called from updateAgentList and
-// updateAgentDetail when transitioning to ScreenModelSelection.
+// when entering the Model Selection screen.
 func initModelSelectionScreen(m *Model) {
 	m.filterInput = textinput.New()
 	m.filterInput.Placeholder = "Type to filter..."

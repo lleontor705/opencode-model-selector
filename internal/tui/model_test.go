@@ -350,49 +350,30 @@ func TestView_NilConfigDoesNotPanic(t *testing.T) {
 	})
 }
 
-func TestUpdate_NestedPickerEscReturnsDetailThenAgentList(t *testing.T) {
+func TestUpdate_DirectPickerEscReturnsAgentList(t *testing.T) {
 	m := NewModel(fixtureConfig(t), richGrouped(), 5)
 	items := selectableItems(m)
 	m.agentCursor = indexOf(items, "code-reviewer")
 
 	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	m = updated.(Model)
-	require.Equal(t, ScreenAgentDetail, m.state)
-
-	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
-	m = updated.(Model)
 	require.Equal(t, ScreenModelSelection, m.state)
-
-	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
-	m = updated.(Model)
-	assert.Equal(t, ScreenAgentDetail, m.state)
 
 	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
 	m = updated.(Model)
 	assert.Equal(t, ScreenAgentList, m.state)
 }
 
-func TestUpdate_NestedFieldInputEscReturnsDetailThenAgentList(t *testing.T) {
+func TestUpdate_AgentActivationNeverReachesNonModelEditors(t *testing.T) {
 	m := NewModel(fixtureConfig(t), sampleGrouped(), 5)
 	items := selectableItems(m)
 	m.agentCursor = indexOf(items, "code-reviewer")
 
 	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	m = updated.(Model)
-	require.Equal(t, ScreenAgentDetail, m.state)
-	m.detailCursor = 1
-
-	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
-	m = updated.(Model)
-	require.Equal(t, ScreenFieldInput, m.state)
-
-	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
-	m = updated.(Model)
-	assert.Equal(t, ScreenAgentDetail, m.state)
-
-	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
-	m = updated.(Model)
-	assert.Equal(t, ScreenAgentList, m.state)
+	assert.Equal(t, ScreenModelSelection, m.state)
+	assert.NotEqual(t, ScreenAgentDetail, m.state)
+	assert.NotEqual(t, ScreenFieldInput, m.state)
 }
 
 func TestUpdate_SaveConfirmRepeatedSDoesNotCorruptCancelTarget(t *testing.T) {
@@ -465,8 +446,6 @@ func TestModelPicker_CursorIndependentFromAgentListCursor(t *testing.T) {
 
 	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	m = updated.(Model)
-	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
-	m = updated.(Model)
 	require.Equal(t, ScreenModelSelection, m.state)
 	assert.Equal(t, 0, m.modelCursor, "model picker starts at its own first result")
 
@@ -474,8 +453,6 @@ func TestModelPicker_CursorIndependentFromAgentListCursor(t *testing.T) {
 	m = updated.(Model)
 	assert.Equal(t, 1, m.modelCursor, "model picker cursor moves independently")
 
-	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
-	m = updated.(Model)
 	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
 	m = updated.(Model)
 	assert.Equal(t, wantAgentCursor, m.agentCursor)
@@ -670,7 +647,7 @@ func TestTUI_ShowsMDAgents(t *testing.T) {
 }
 
 // TestTUI_MarkdownBackedAgentIsEditable verifies that pressing ENTER on an
-// md-backed agent OPENS the Agent Detail editor. Edits persist as inline-JSON
+// md-backed agent opens model selection. Edits persist as inline-JSON
 // overrides (agent.<name>.<field>); the .md file is never written. This was
 // previously gated off (read-only v1); the gate is removed in T-B7 because
 // OpenCode treats agent.<name> as a per-field overlay on the md agent, so a
@@ -691,8 +668,8 @@ func TestTUI_MarkdownBackedAgentIsEditable(t *testing.T) {
 
 	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	result := updated.(Model)
-	assert.Equal(t, ScreenAgentDetail, result.state,
-		"ENTER on an md-backed agent MUST open the Agent Detail editor")
+	assert.Equal(t, ScreenModelSelection, result.state,
+		"ENTER on an md-backed agent MUST open model selection")
 	assert.Equal(t, "editable", result.selectedAgent,
 		"selectedAgent MUST be the md-backed agent at the cursor")
 
@@ -704,8 +681,8 @@ func TestTUI_MarkdownBackedAgentIsEditable(t *testing.T) {
 	m2.agentCursor = cursor2
 	updated2, _ := m2.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	result2 := updated2.(Model)
-	assert.Equal(t, ScreenAgentDetail, result2.state,
-		"ENTER on a JSON-backed agent must still open the editor")
+	assert.Equal(t, ScreenModelSelection, result2.state,
+		"ENTER on a JSON-backed agent must still open model selection")
 }
 
 // TestTUI_MarkdownAgentShowsMergedModel verifies that a md-backed agent's

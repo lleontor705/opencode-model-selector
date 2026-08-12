@@ -14,6 +14,7 @@ package tui
 import (
 	"context"
 	"reflect"
+	"sort"
 
 	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/charmbracelet/bubbles/viewport"
@@ -289,6 +290,32 @@ func computeMdOnly(cfg *config.Config) map[string]bool {
 // editable, and edits persist as inline-JSON overrides via SetAgentField.
 func (m Model) IsMarkdownOnly(name string) bool {
 	return m.mdOnlyAgents[name]
+}
+
+// selectableCatalogNames returns each editable catalog identity exactly once,
+// across primary, subagent, and all-role buckets.
+func selectableCatalogNames(m Model) []string {
+	disabled := make(map[string]struct{}, len(m.disabledAgents))
+	for _, name := range m.disabledAgents {
+		disabled[name] = struct{}{}
+	}
+	seen := make(map[string]struct{}, len(m.catalogByName))
+	names := make([]string, 0, len(m.catalogByName))
+	for _, record := range m.agentCatalog.Records() {
+		if record.Name == "" {
+			continue
+		}
+		if _, excluded := disabled[record.Name]; excluded {
+			continue
+		}
+		if _, duplicate := seen[record.Name]; duplicate {
+			continue
+		}
+		seen[record.Name] = struct{}{}
+		names = append(names, record.Name)
+	}
+	sort.Strings(names)
+	return names
 }
 
 func (m *Model) pushScreen(next appState) {

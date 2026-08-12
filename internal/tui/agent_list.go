@@ -157,8 +157,8 @@ func viewAgentList(m Model) string {
 
 func agentListHelp(width int) string {
 	return renderResponsiveHelp(width,
-		"Enter Edit · A Apply-all · M Multi · S Review & Save · Q Quit",
-		"Enter Edit · A All · M · S Save · Q Quit",
+		"Enter Model · A Apply-all · M Multi · S Review & Save · Q Quit",
+		"Enter Model · A · M · S Save · Q Quit",
 	)
 }
 
@@ -413,7 +413,7 @@ func configuredFieldValue(m Model, name, field string) (string, bool) {
 // Keys:
 //   - j / Down: cursor down (skips disabled agents)
 //   - k / Up:   cursor up (skips disabled agents)
-//   - ENTER:    on global → ScreenModelSelection; on agent → ScreenAgentDetail
+//   - ENTER:    on global or agent → ScreenModelSelection
 //   - s:        transition to ScreenSaveConfirm (only if dirty)
 //   - q / Ctrl+C: quit — when dirty, shows confirmation overlay first
 //
@@ -462,6 +462,8 @@ func updateAgentList(m Model, msg tea.KeyMsg) (Model, tea.Cmd) {
 	// --- 'm': Flow B — pick agents first, then model ---
 	case msg.Type == tea.KeyRunes && len(msg.Runes) == 1 && msg.Runes[0] == 'm':
 		initAgentMultiSelectScreen(&m)
+		m.multiSelectItems = selectableCatalogNames(m)
+		m.multiSelectChecked = make([]bool, len(m.multiSelectItems))
 		m.pushScreen(ScreenAgentMultiSelect)
 		m.quitConfirm = false
 		return m, nil
@@ -526,8 +528,10 @@ func updateAgentList(m Model, msg tea.KeyMsg) (Model, tea.Cmd) {
 				initModelSelectionScreen(&m)
 			} else {
 				m.selectedAgent = item
-				m.pushScreen(ScreenAgentDetail)
+				m.pushScreen(ScreenModelSelection)
+				m.fieldEditing = item
 				m.quitConfirm = false
+				initModelSelectionScreen(&m)
 			}
 		}
 		return m, nil
