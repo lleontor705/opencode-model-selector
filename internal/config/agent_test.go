@@ -369,6 +369,64 @@ func TestInlineJSON_PathsUnchanged(t *testing.T) {
 	assert.Len(t, disabled, 1)
 }
 
+func TestGetAgentGroups_RetainsAllModesAcrossStaticSources(t *testing.T) {
+	home := t.TempDir()
+	setHomeEnv(t, home)
+	writeGlobalMD(t, home, "global-default.md", "---\nmodel: global-model\n---\nGlobal.\n")
+	writeGlobalMD(t, home, "shared.md", "---\nmode: primary\n---\nGlobal shared.\n")
+
+	projectRoot := t.TempDir()
+	projectAgents := filepath.Join(projectRoot, ".opencode", "agents")
+	require.NoError(t, os.MkdirAll(projectAgents, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(projectAgents, "project-all.md"), []byte("---\nmode: all\n---\nProject.\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(projectAgents, "shared.md"), []byte("---\nmode: subagent\n---\nProject shared.\n"), 0o644))
+	oldWD, err := os.Getwd()
+	require.NoError(t, err)
+	require.NoError(t, os.Chdir(projectRoot))
+	t.Cleanup(func() { require.NoError(t, os.Chdir(oldWD)) })
+
+	cfg := &Config{data: map[string]interface{}{
+		"agent": map[string]interface{}{
+			"z-explicit": map[string]interface{}{"mode": " ALL "},
+			"a-empty":    map[string]interface{}{"mode": ""},
+			"m-missing":  map[string]interface{}{"description": "default mode"},
+			"bad-mode":   map[string]interface{}{"mode": 42},
+			"shared":     map[string]interface{}{"mode": " PRIMARY "},
+			"disabled":   map[string]interface{}{"mode": "all", "disable": true},
+		},
+	}}
+
+	groups := cfg.GetAgentGroups()
+	assert.Equal(t, []string{"shared"}, groups.Primary, "inline JSON mode wins and is normalized")
+	assert.Empty(t, groups.Subagents, "project mode must not duplicate an inline primary")
+	assert.Equal(t, []string{
+		"a-empty", "bad-mode", "disabled", "global-default", "m-missing", "project-all", "z-explicit",
+	}, groups.All, "missing, empty, explicit, and invalid modes fall back to the distinct all bucket")
+	assert.Equal(t, []string{"disabled"}, groups.Disabled)
+
+	for _, name := range groups.All {
+		assert.NotContains(t, groups.Primary, name)
+		assert.NotContains(t, groups.Subagents, name)
+	}
+}
+
+func TestGetAgents_CompatibilitySignatureUsesNewGrouping(t *testing.T) {
+	setHomeEnv(t, t.TempDir())
+	cfg := &Config{data: map[string]interface{}{
+		"agent": map[string]interface{}{
+			"primary": map[string]interface{}{"mode": "PRIMARY"},
+			"sub":     map[string]interface{}{"mode": " SubAgent "},
+			"all":     map[string]interface{}{"mode": "all", "disable": true},
+		},
+	}}
+
+	primary, subagents, disabled := cfg.GetAgents()
+	assert.Equal(t, []string{"primary"}, primary)
+	assert.Equal(t, []string{"sub"}, subagents)
+	assert.Equal(t, []string{"all"}, disabled)
+	assert.Equal(t, []string{"all"}, cfg.GetAgentGroups().All)
+}
+
 // ---------------------------------------------------------------------------
 // GetMergedAgentField — display-only reader honoring md + inline-JSON
 // precedence (T-B7)

@@ -88,10 +88,7 @@ type MergedAgent struct {
 // Mode returns the resolved agent mode ("primary"|"subagent"|"all"), defaulting
 // to "all" when absent or non-string.
 func (m *MergedAgent) Mode() string {
-	if s, ok := m.Fields["mode"].(string); ok {
-		return s
-	}
-	return "all"
+	return normalizeAgentMode(m.Fields["mode"])
 }
 
 // Disabled reports whether the agent has disable:true (a JSON-only field).

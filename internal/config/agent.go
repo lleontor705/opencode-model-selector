@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"sort"
+	"strings"
 )
 
 // systemAgents is the set of agent names reserved for opencode's internal use.
@@ -80,8 +81,18 @@ func (c *Config) SetAgentField(agentName, fieldName string, value interface{}) e
 	return nil
 }
 
-// GetAgents returns all agent names grouped by mode: primary, subagents, and
-// disabled. System agents are excluded from every slice.
+// AgentGroups contains mutually exclusive role buckets plus disabled-agent
+// metadata. An agent appears in exactly one of Primary, Subagents, or All, and
+// may additionally appear in Disabled.
+type AgentGroups struct {
+	Primary   []string
+	Subagents []string
+	All       []string
+	Disabled  []string
+}
+
+// GetAgents retains the legacy three-result API for existing callers. New
+// callers that need agents whose role is "all" should use GetAgentGroups.
 //
 // The lists now include MARKDOWN agents discovered in the global
 // (~/.config/opencode/agents/*.md) and project (<cwd>/.opencode/agents/*.md)
@@ -102,25 +113,38 @@ func (c *Config) SetAgentField(agentName, fieldName string, value interface{}) e
 // Pure-JSON GetAgentField/GetGlobalModel/decodeConfig/LoadConfig/GetConfigPath
 // behavior is unchanged (REGRESS-001).
 func (c *Config) GetAgents() (primary, subagents, disabled []string) {
+	groups := c.GetAgentGroups()
+	return groups.Primary, groups.Subagents, groups.Disabled
+}
+
+// GetAgentGroups returns all non-system agents grouped by normalized mode.
+// Missing, empty, invalid, and explicit "all" modes use the distinct All
+// bucket and are never duplicated into Primary or Subagents. Every slice is
+// sorted alphabetically.
+func (c *Config) GetAgentGroups() AgentGroups {
+	var groups AgentGroups
 	for name, m := range c.mergedAgents() {
 		if IsSystemAgent(name) {
 			continue
 		}
 		switch m.Mode() {
 		case "primary":
-			primary = append(primary, name)
+			groups.Primary = append(groups.Primary, name)
 		case "subagent":
-			subagents = append(subagents, name)
+			groups.Subagents = append(groups.Subagents, name)
+		default:
+			groups.All = append(groups.All, name)
 		}
 		if m.Disabled() {
-			disabled = append(disabled, name)
+			groups.Disabled = append(groups.Disabled, name)
 		}
 	}
 
-	sort.Strings(primary)
-	sort.Strings(subagents)
-	sort.Strings(disabled)
-	return
+	sort.Strings(groups.Primary)
+	sort.Strings(groups.Subagents)
+	sort.Strings(groups.All)
+	sort.Strings(groups.Disabled)
+	return groups
 }
 
 // mergedAgents is the shared core of GetAgents and MergedAgents: it discovers
@@ -238,20 +262,30 @@ func (c *Config) GetAgentMode(agentName string) string {
 	if !ok {
 		return "all"
 	}
-	s, ok := val.(string)
-	if !ok {
-		return "all"
-	}
-	return s
+	return normalizeAgentMode(val)
 }
 
 // getModeString extracts the "mode" string from an agent map, defaulting to
 // "all" when absent or non-string.
 func getModeString(agent map[string]interface{}) string {
-	if m, ok := agent["mode"].(string); ok {
-		return m
+	return normalizeAgentMode(agent["mode"])
+}
+
+// normalizeAgentMode canonicalizes supported role values and safely falls
+// back to "all" for absent, empty, non-string, or unknown values.
+func normalizeAgentMode(value interface{}) string {
+	mode, ok := value.(string)
+	if !ok {
+		return "all"
 	}
-	return "all"
+	switch strings.ToLower(strings.TrimSpace(mode)) {
+	case "primary":
+		return "primary"
+	case "subagent":
+		return "subagent"
+	default:
+		return "all"
+	}
 }
 
 // getBoolField extracts a boolean field from an agent map, defaulting to false.
