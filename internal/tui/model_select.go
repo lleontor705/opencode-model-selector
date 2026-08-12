@@ -318,7 +318,7 @@ func selectModelAtCursor(m Model) Model {
 	case "global":
 		oldVal, _ := m.config.GetGlobalModel()
 		m.config.SetGlobalModel(selected.FullName)
-		m.RecordChange("global", "model", oldVal, selected.FullName)
+		m.RecordModelChange("global", oldVal, selected.FullName)
 
 	case fieldEditingBulkAll:
 		for _, name := range selectableCatalogNames(m) {
@@ -329,7 +329,7 @@ func selectModelAtCursor(m Model) Model {
 			if err := m.config.SetAgentModelOverride(name, selected.FullName); err != nil {
 				continue
 			}
-			m.RecordChange(name, "model", oldVal, selected.FullName)
+			m.RecordModelChange(name, oldVal, selected.FullName)
 		}
 		m.bulkTargets = nil
 
@@ -350,7 +350,7 @@ func selectModelAtCursor(m Model) Model {
 			if err := m.config.SetAgentModelOverride(name, selected.FullName); err != nil {
 				continue
 			}
-			m.RecordChange(name, "model", oldVal, selected.FullName)
+			m.RecordModelChange(name, oldVal, selected.FullName)
 		}
 		m.bulkTargets = nil
 
@@ -363,8 +363,10 @@ func selectModelAtCursor(m Model) Model {
 			m.popScreen()
 			return m
 		}
-		_ = m.config.SetAgentModelOverride(m.selectedAgent, selected.FullName)
-		m.RecordChange(m.selectedAgent, "model", oldVal, selected.FullName)
+		if err := m.config.SetAgentModelOverride(m.selectedAgent, selected.FullName); err != nil {
+			return m
+		}
+		m.RecordModelChange(m.selectedAgent, oldVal, selected.FullName)
 	}
 
 	m.popScreen()

@@ -706,8 +706,8 @@ func TestTUI_MarkdownAgentBadgeDisappearsAfterJSONOverride(t *testing.T) {
 		"[MD] badge MUST be shown while no JSON override exists")
 
 	// Simulate the user setting a model override via the editor flow.
-	require.NoError(t, m.config.SetAgentField("rev", "model", "json-model"))
-	m.RecordChange("rev", "model", "md-orig", "json-model")
+	require.NoError(t, m.config.SetAgentModelOverride("rev", "json-model"))
+	m.RecordModelChange("rev", "md-orig", "json-model")
 	m.dirty = true
 	m.state = ScreenSaveConfirm
 	m.navigationStack = []appState{ScreenAgentList}
@@ -754,7 +754,7 @@ func TestTUI_EditingMarkdownAgentPersistsJSONOnly(t *testing.T) {
 	assert.False(t, ok, "precondition: review has no JSON entry yet")
 
 	// Apply the same model override behavior used by the model picker.
-	require.NoError(t, cfg.SetAgentField("review", "model", "opencode-go/glm-5.2"))
+	require.NoError(t, cfg.SetAgentModelOverride("review", "opencode-go/glm-5.2"))
 	require.NoError(t, cfg.Save())
 
 	// 1) The .md file MUST be byte-for-byte unchanged.

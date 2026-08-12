@@ -13,7 +13,6 @@ package tui
 
 import (
 	"context"
-	"reflect"
 	"sort"
 
 	"github.com/charmbracelet/bubbles/textinput"
@@ -59,16 +58,12 @@ const (
 	ScreenAgentMultiSelect
 )
 
-// Change records a single in-memory mutation that will be persisted on save.
-// Target is "global" for the global default model or the agent name for
-// per-agent edits; Field is the config key. OldVal
-// and NewVal carry the raw interface{} values from the config layer so the
-// save-confirm screen can render a human-readable diff.
+// Change records one model-only mutation pending persistence. Target is
+// "global" or a catalog agent name; no generic config field is representable.
 type Change struct {
-	Target string
-	Field  string
-	OldVal interface{}
-	NewVal interface{}
+	Target   string
+	OldModel string
+	NewModel string
 }
 
 // Model is the root Bubbletea model. It carries ALL TUI state in a single
@@ -135,8 +130,8 @@ type Model struct {
 
 	// dirty is true when any in-memory edit has not yet been persisted.
 	dirty bool
-	// changes records the net in-memory mutations since the last successful
-	// save, coalesced by target and field for review before writing to disk.
+	// changes records net model mutations since the last successful save,
+	// coalesced by target for review before writing to disk.
 	changes []Change
 	// quitConfirm is true when the "quit anyway?" confirmation overlay is
 	// active on the Agent List screen. It is a sub-state of ScreenAgentList,
@@ -321,52 +316,30 @@ func (m Model) Init() tea.Cmd {
 	return nil
 }
 
-// RecordChange coalesces mutations by target and field. The first old value is
-// retained while later edits replace the pending new value. Reverting to the
-// original value removes the net change entirely.
-func (m *Model) RecordChange(target, field string, oldVal, newVal interface{}) {
+// RecordModelChange coalesces model mutations by target. The first old model
+// is retained while later edits replace the pending new model. Reverting to
+// the original model removes the net change entirely.
+func (m *Model) RecordModelChange(target, oldModel, newModel string) {
 	for i := range m.changes {
 		change := &m.changes[i]
-		if change.Target != target || change.Field != field {
+		if change.Target != target {
 			continue
 		}
-		if valuesEqual(change.OldVal, newVal) {
+		if change.OldModel == newModel {
 			m.changes = append(m.changes[:i], m.changes[i+1:]...)
 		} else {
-			change.NewVal = newVal
+			change.NewModel = newModel
 		}
 		m.dirty = len(m.changes) > 0
 		return
 	}
 
-	if valuesEqual(oldVal, newVal) {
+	if oldModel == newModel {
 		m.dirty = len(m.changes) > 0
 		return
 	}
-	m.changes = append(m.changes, Change{Target: target, Field: field, OldVal: oldVal, NewVal: newVal})
+	m.changes = append(m.changes, Change{Target: target, OldModel: oldModel, NewModel: newModel})
 	m.dirty = true
-}
-
-func valuesEqual(left, right interface{}) bool {
-	if reflect.DeepEqual(left, right) {
-		return true
-	}
-	leftNumber, leftOK := numericValue(left)
-	rightNumber, rightOK := numericValue(right)
-	return leftOK && rightOK && leftNumber == rightNumber
-}
-
-func numericValue(value interface{}) (float64, bool) {
-	switch number := value.(type) {
-	case int:
-		return float64(number), true
-	case int64:
-		return float64(number), true
-	case float64:
-		return number, true
-	default:
-		return 0, false
-	}
 }
 
 // Update is the global key/message dispatcher. Ctrl+C remains global, while

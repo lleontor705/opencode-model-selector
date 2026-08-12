@@ -50,7 +50,7 @@ func TestWindowSizeMsg_ResizesListAndViewportComponents(t *testing.T) {
 
 func TestViewAgentList_CompactRowShowsModelOnly(t *testing.T) {
 	cfg := fixtureConfig(t)
-	require.NoError(t, cfg.SetAgentField("plan", "model", "openai/gpt-5"))
+	require.NoError(t, cfg.SetAgentModelOverride("plan", "openai/gpt-5"))
 	m := NewModel(cfg, sampleGrouped(), 5)
 	m.agentCursor = indexOf(selectableItems(m), "plan")
 	m = resizeModel(t, m, 80, 24)
@@ -72,7 +72,7 @@ func TestView_FooterRemainsVisibleAtMinimumSupportedHeight(t *testing.T) {
 
 func TestAgentList_LongModelValueTruncatesToTerminalWidth(t *testing.T) {
 	cfg := fixtureConfig(t)
-	require.NoError(t, cfg.SetAgentField("plan", "model", "provider/"+strings.Repeat("very-long-model-", 12)))
+	require.NoError(t, cfg.SetAgentModelOverride("plan", "provider/"+strings.Repeat("very-long-model-", 12)))
 	m := NewModel(cfg, sampleGrouped(), 5)
 	m.agentCursor = indexOf(selectableItems(m), "plan")
 	m = resizeModel(t, m, 60, 18)

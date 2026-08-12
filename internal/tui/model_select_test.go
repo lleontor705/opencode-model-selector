@@ -396,7 +396,7 @@ func TestViewModelSelection_CurrentModelMarkerForAgent(t *testing.T) {
 	// code-reviewer has model "anthropic/claude-sonnet-4-20250514" in the fixture,
 	// which is NOT in richGrouped — so no checkmark should appear for the fixture
 	// models. Instead, set it to a model that IS in richGrouped.
-	require.NoError(t, m.config.SetAgentField("code-reviewer", "model", "opencode-go/glm-5.2"))
+	require.NoError(t, m.config.SetAgentModelOverride("code-reviewer", "opencode-go/glm-5.2"))
 	out := viewModelSelection(m)
 	assert.True(t, containsAny(out, "\u2713", "current"),
 		"the current per-agent model MUST be marked with a checkmark or 'current' indicator")
@@ -817,7 +817,7 @@ func TestUpdateAgentList_EnterOnGlobal_InitializesFilterInput(t *testing.T) {
 // selecting a model in bulk-all mode applies it to every non-system,
 // non-disabled agent in the config.
 //
-// Spec: REQ-TUI-001 (Flow A 'a' key), REQ-TUI-004 (RecordChange per target).
+// Spec: REQ-TUI-001 (Flow A 'a' key), REQ-TUI-004 (model change per target).
 func TestSelectModelAtCursor_BulkAll_AppliesToAllNonDisabled(t *testing.T) {
 	m := newModelSelectModel(t, "bulk-all", "")
 	targetModel := m.filteredModels[m.modelCursor].FullName
@@ -892,12 +892,12 @@ func TestSelectModelAtCursor_BulkAll_SkipsDisabled(t *testing.T) {
 // TestSelectModelAtCursor_BulkAll_IdempotentNoSecondChange verifies that
 // an agent already on the target model produces no Change entry.
 //
-// Spec: REQ-TUI-004 — agent already on target → no Change (RecordChange coalescing).
+// Spec: REQ-TUI-004 — agent already on target → no model change.
 func TestSelectModelAtCursor_BulkAll_IdempotentNoSecondChange(t *testing.T) {
 	m := newModelSelectModel(t, "bulk-all", "")
 	targetModel := m.filteredModels[m.modelCursor].FullName
 
-	require.NoError(t, m.config.SetAgentField("code-reviewer", "model", targetModel))
+	require.NoError(t, m.config.SetAgentModelOverride("code-reviewer", targetModel))
 
 	result := selectModelAtCursor(m)
 

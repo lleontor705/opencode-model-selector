@@ -391,7 +391,7 @@ func copyFixtureToTemp(t *testing.T) string {
 // TestFlowB_EndToEnd verifies the complete Flow B sequence:
 // 'm' → SPACE ×2 → ENTER → pick model → changes recorded.
 //
-// Spec: REQ-TUI-002 (Flow B), REQ-TUI-004 (RecordChange per target).
+// Spec: REQ-TUI-002 (Flow B), REQ-TUI-004 (model change per target).
 func TestFlowB_EndToEnd(t *testing.T) {
 	m := NewModel(fixtureConfig(t), richGrouped(), 5)
 
@@ -421,16 +421,14 @@ func TestFlowB_EndToEnd(t *testing.T) {
 	require.Len(t, m.bulkTargets, 2,
 		"step 3: bulkTargets MUST contain 2 items")
 
-	// Step 4: Select model at cursor → RecordChange per target
+	// Step 4: Select model at cursor → model change per target
 	selectedModel := m.filteredModels[m.modelCursor]
 	result := selectModelAtCursor(m)
 	require.Len(t, result.changes, 2,
 		"step 4: bulk-list MUST produce exactly 2 Changes")
 
 	for _, ch := range result.changes {
-		assert.Equal(t, "model", ch.Field,
-			"each change MUST be on the 'model' field")
-		assert.Equal(t, selectedModel.FullName, ch.NewVal,
+		assert.Equal(t, selectedModel.FullName, ch.NewModel,
 			"each change NewVal MUST be the selected model")
 	}
 
