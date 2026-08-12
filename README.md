@@ -89,7 +89,7 @@ For detailed installation instructions, see [INSTALLATION.md](./docs/INSTALLATIO
 
 > **Configuration writes:** `ocs` writes only the top-level `model` or `agent.<name>.model` to JSON/JSONC. Agent Markdown files are discovery inputs and remain immutable. JSONC comments are supported on load but are not preserved on save because the file is rewritten as standard JSON.
 
-> **Startup:** runtime discovery starts a temporary local OpenCode server, so startup latency of about 2 seconds may occur. The server accepts only a validated loopback address and is stopped after discovery. On Windows, descendant cleanup is best effort using the current `taskkill /T /F` implementation; this is not a strict child-containment guarantee.
+> **Startup:** runtime discovery starts a temporary local OpenCode server, so startup typically takes a few seconds; observed startup varies (~2-5s). The server accepts only a validated loopback address and is stopped after discovery. On Windows, descendant cleanup is best effort using the current `taskkill /T /F` implementation; this is not a strict child-containment guarantee.
 
 ## CLI Usage
 

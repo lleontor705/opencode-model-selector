@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -400,11 +401,82 @@ func TestFormatAgents_DegradedCatalogMarksEveryFallbackRecord(t *testing.T) {
 type fakeAgentDiscovery struct {
 	catalog   agentcatalog.Catalog
 	directory string
+	calls     int
 }
 
 func (f *fakeAgentDiscovery) Discover(_ context.Context, directory string) agentcatalog.Catalog {
+	f.calls++
 	f.directory = directory
 	return f.catalog
+}
+
+func TestRunTUIUsesAuthoritativeRuntimeCatalogOnce(t *testing.T) {
+	cfg := loadTestConfig(t)
+	want := agentcatalog.Catalog{Buckets: agentcatalog.Classify([]agentcatalog.AgentRecord{
+		{Name: "Build", Role: agentcatalog.RolePrimary, Native: true, Source: agentcatalog.SourceRuntime},
+		{Name: "plugin-review", Role: agentcatalog.RoleSubagent, Source: agentcatalog.SourcePlugin},
+		{Name: "runtime-all", Role: agentcatalog.RoleAll, Source: agentcatalog.SourceRuntime},
+	})}
+	discovery := &fakeAgentDiscovery{catalog: want}
+	var received agentcatalog.Catalog
+	constructed := false
+	run := false
+
+	err := runTUIWithDependencies(cfg, nil, 3, func(*config.Config) agentDiscoverer {
+		return discovery
+	}, func(gotCfg *config.Config, grouped map[string][]opencode.Model, backupCount int, catalog agentcatalog.Catalog) tea.Model {
+		constructed = true
+		assert.Same(t, cfg, gotCfg)
+		assert.Empty(t, grouped)
+		assert.Equal(t, 3, backupCount)
+		received = catalog
+		return nil
+	}, func(model tea.Model) error {
+		run = true
+		assert.Nil(t, model)
+		return nil
+	})
+
+	require.NoError(t, err)
+	assert.True(t, constructed)
+	assert.True(t, run)
+	assert.Equal(t, 1, discovery.calls, "one invocation must run runtime discovery exactly once")
+	assert.False(t, received.Degraded)
+	assert.Equal(t, want.Records(), received.Records())
+	assert.NotContains(t, recordNames(received), "fallback-only", "runtime success must not leak fallback-only identities")
+}
+
+func TestRunTUIRuntimeFailureUsesDegradedStaticCatalog(t *testing.T) {
+	cfg := loadTestConfig(t)
+	want := agentcatalog.Catalog{
+		Buckets:  agentcatalog.Classify([]agentcatalog.AgentRecord{{Name: "fallback-only", Role: agentcatalog.RoleAll, Source: agentcatalog.SourceConfig}}),
+		Degraded: true,
+	}
+	discovery := &fakeAgentDiscovery{catalog: want}
+	var received agentcatalog.Catalog
+
+	stderr := captureStderr(t, func() {
+		err := runTUIWithDependencies(cfg, nil, 5, func(*config.Config) agentDiscoverer {
+			return discovery
+		}, func(_ *config.Config, _ map[string][]opencode.Model, _ int, catalog agentcatalog.Catalog) tea.Model {
+			received = catalog
+			return nil
+		}, func(tea.Model) error { return nil })
+		require.NoError(t, err, "degraded fallback must not prevent TUI startup")
+	})
+
+	assert.Equal(t, 1, discovery.calls)
+	assert.True(t, received.Degraded)
+	assert.Equal(t, []string{"fallback-only"}, recordNames(received))
+	assert.Equal(t, "Warning: runtime agent discovery failed; using static catalog\n", stderr)
+}
+
+func recordNames(catalog agentcatalog.Catalog) []string {
+	names := make([]string, 0, len(catalog.Records()))
+	for _, record := range catalog.Records() {
+		names = append(names, record.Name)
+	}
+	return names
 }
 
 // ---------------------------------------------------------------------------

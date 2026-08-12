@@ -154,9 +154,7 @@ func parseFlags(args []string) (cliOptions, int) {
 //
 // Spec: REQ-CMD-001, REQ-CMD-004
 func run(args []string) int {
-	return runWithAgentDiscovery(args, func(cfg *config.Config) agentDiscoverer {
-		return agentcatalog.Discovery{Runtime: opencode.NewRuntimeAgentProbe(), Static: cfg}
-	})
+	return runWithAgentDiscovery(args, productionAgentDiscovery)
 }
 
 // agentDiscoverer is the narrow seam used by CLI tests to avoid starting a
@@ -166,6 +164,25 @@ type agentDiscoverer interface {
 }
 
 type agentDiscoveryFactory func(*config.Config) agentDiscoverer
+
+func productionAgentDiscovery(cfg *config.Config) agentDiscoverer {
+	return agentcatalog.Discovery{Runtime: opencode.NewRuntimeAgentProbe(), Static: cfg}
+}
+
+func loadAgentCatalog(cfg *config.Config, newDiscovery agentDiscoveryFactory) (agentcatalog.Catalog, error) {
+	if newDiscovery == nil {
+		return agentcatalog.Catalog{}, errors.New("agent discovery is unavailable")
+	}
+	directory, err := os.Getwd()
+	if err != nil {
+		return agentcatalog.Catalog{}, fmt.Errorf("resolving runtime directory: %w", err)
+	}
+	catalog := newDiscovery(cfg).Discover(context.Background(), directory)
+	if catalog.Degraded {
+		fmt.Fprintln(os.Stderr, "Warning: runtime agent discovery failed; using static catalog")
+	}
+	return catalog, nil
+}
 
 func runWithAgentDiscovery(args []string, newDiscovery agentDiscoveryFactory) int {
 	opts, exitCode := parseFlags(args)
@@ -221,18 +238,10 @@ func runWithAgentDiscovery(args []string, newDiscovery agentDiscoveryFactory) in
 		}
 
 	case modeListAgents:
-		if newDiscovery == nil {
-			fmt.Fprintln(os.Stderr, "Error: agent discovery is unavailable")
-			return 1
-		}
-		directory, err := os.Getwd()
+		catalog, err := loadAgentCatalog(cfg, newDiscovery)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error resolving runtime directory: %v\n", err)
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			return 1
-		}
-		catalog := newDiscovery(cfg).Discover(context.Background(), directory)
-		if catalog.Degraded {
-			fmt.Fprintln(os.Stderr, "Warning: runtime agent discovery failed; using static catalog")
 		}
 		if err := runListAgents(catalog); err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
@@ -259,7 +268,7 @@ func runWithAgentDiscovery(args []string, newDiscovery agentDiscoveryFactory) in
 			return 1
 		}
 		grouped := opencode.GroupByProvider(models)
-		if err := runTUI(cfg, grouped, opts.backupCount); err != nil {
+		if err := runTUIWithDependencies(cfg, grouped, opts.backupCount, newDiscovery, newTUIModel, runTUIProgram); err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			return 1
 		}
@@ -374,18 +383,33 @@ func runListAgents(catalog agentcatalog.Catalog) error {
 	return formatAgents(os.Stdout, catalog)
 }
 
-// runTUI launches the interactive Bubbletea terminal UI in alt-screen mode.
-//
-// This is a thin wrapper over tea.NewProgram — it constructs the TUI model
-// via tui.NewModel and runs the program. The function cannot be unit-tested
-// in CI because program.Run() takes over the terminal; manual testing only.
+// runTUI launches the interactive Bubbletea terminal UI with authoritative
+// runtime discovery and static degraded fallback.
 //
 // Spec: REQ-CMD-005, REQ-TUI-001
 func runTUI(cfg *config.Config, grouped map[string][]opencode.Model, backupCount int) error {
-	model := tui.NewModel(cfg, grouped, backupCount)
+	return runTUIWithDependencies(cfg, grouped, backupCount, productionAgentDiscovery, newTUIModel, runTUIProgram)
+}
+
+type tuiModelFactory func(*config.Config, map[string][]opencode.Model, int, agentcatalog.Catalog) tea.Model
+type tuiRunner func(tea.Model) error
+
+func newTUIModel(cfg *config.Config, grouped map[string][]opencode.Model, backupCount int, catalog agentcatalog.Catalog) tea.Model {
+	return tui.NewModelWithCatalog(cfg, grouped, backupCount, catalog)
+}
+
+func runTUIProgram(model tea.Model) error {
 	program := tea.NewProgram(model, tea.WithAltScreen())
 	_, err := program.Run()
 	return err
+}
+
+func runTUIWithDependencies(cfg *config.Config, grouped map[string][]opencode.Model, backupCount int, newDiscovery agentDiscoveryFactory, newModel tuiModelFactory, runProgram tuiRunner) error {
+	catalog, err := loadAgentCatalog(cfg, newDiscovery)
+	if err != nil {
+		return err
+	}
+	return runProgram(newModel(cfg, grouped, backupCount, catalog))
 }
 
 // --- Model and Agent Formatting (REQ-CMD-002, REQ-CMD-003) ---

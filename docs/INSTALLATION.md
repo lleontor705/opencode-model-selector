@@ -66,7 +66,7 @@ ocs --help
 
 ## Prerequisites
 
-- [OpenCode CLI](https://opencode.ai) installed and on your `$PATH`. It is required for model discovery and the full runtime agent catalog. `ocs` starts a short-lived `opencode serve` process on loopback and calls `GET /agent`; this discovers native, custom, and plugin-provided runtime agents, excludes hidden native agents, and groups the remainder as Primary, Subagent, or All. Startup latency of about 2 seconds may occur.
+- [OpenCode CLI](https://opencode.ai) installed and on your `$PATH`. It is required for model discovery and the full runtime agent catalog. `ocs` starts a short-lived `opencode serve` process on loopback and calls `GET /agent`; this discovers native, custom, and plugin-provided runtime agents, excludes hidden native agents, and groups the remainder as Primary, Subagent, or All. Startup typically takes a few seconds; observed startup varies (~2-5s).
 - If the OpenCode binary is missing or runtime discovery otherwise fails, agent catalog discovery falls back to static JSON, global agent Markdown, and project agent Markdown data and shows a degraded warning. Interactive model selection and `--list-models` still require OpenCode because they need its model catalog.
 - An OpenCode config file. Both `opencode.json` and `opencode.jsonc` are supported. The default locations (probed in this order) are `~/.config/opencode/opencode.jsonc` and `~/.config/opencode/opencode.json`. If neither exists, the tool defaults to creating `opencode.json` on first save.
 

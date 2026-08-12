@@ -5,9 +5,9 @@
 // precedence:
 //
 //   - global:  ~/.config/opencode/agents/*.md  (resolved via os.UserHomeDir,
-//              consistent with GetConfigPath)
+//     consistent with GetConfigPath)
 //   - project: the .opencode/agents directory passed by the caller (the default
-//              is <cwd>/.opencode/agents via DefaultProjectAgentsDir)
+//     is <cwd>/.opencode/agents via DefaultProjectAgentsDir)
 //
 // Missing directories are non-fatal (yield an empty map). Per-file parse errors
 // are logged and skipped; one bad file never breaks discovery for the rest.

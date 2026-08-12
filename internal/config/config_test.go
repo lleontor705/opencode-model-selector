@@ -334,7 +334,7 @@ func TestSave_RoundTripPreservesUnknownFields(t *testing.T) {
 	cfg := &Config{
 		path: path,
 		data: map[string]interface{}{
-			"agent":    map[string]interface{}{},
+			"agent":       map[string]interface{}{},
 			"futureField": 42,
 		},
 	}
