@@ -60,6 +60,11 @@ func TestParseFlags_ListAgents(t *testing.T) {
 	assert.Equal(t, modeListAgents, opts.mode)
 }
 
+func TestPrintUsage_ListAgentsDescribesModelOnlyCatalog(t *testing.T) {
+	assert.Equal(t, "List the runtime agent catalog", listAgentsHelp)
+	assert.NotContains(t, listAgentsHelp, "field values")
+}
+
 // TestParseFlags_ConfigOverride verifies that --config sets the config path
 // and does not change the default TUI mode.
 //

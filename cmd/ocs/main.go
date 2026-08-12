@@ -37,6 +37,7 @@ const (
 	modeListModels cliMode = "list-models"
 	modeListAgents cliMode = "list-agents"
 	modeApplyModel cliMode = "apply-model"
+	listAgentsHelp         = "List the runtime agent catalog"
 )
 
 // cliOptions holds the parsed CLI flag values and the resolved dispatch mode.
@@ -96,7 +97,7 @@ func parseFlags(args []string) (cliOptions, int) {
 
 	fs.StringVar(&opts.configPath, "config", "", "Override config file path")
 	fs.BoolVar(&listModels, "list-models", false, "List available models grouped by provider")
-	fs.BoolVar(&listAgents, "list-agents", false, "List agents with current field values")
+	fs.BoolVar(&listAgents, "list-agents", false, listAgentsHelp)
 	fs.IntVar(&opts.backupCount, "backup-count", 5, "Number of backups to retain (0 to disable)")
 	fs.StringVar(&opts.applyModel, "apply-model", "", "Apply model to agents (requires --agents)")
 	fs.StringVar(&opts.agentsCSV, "agents", "", "Target agents: 'all' or comma-separated names")
