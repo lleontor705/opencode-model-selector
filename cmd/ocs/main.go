@@ -10,18 +10,19 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"flag"
 	"fmt"
 	"io"
 	"os"
 	"sort"
-	"strconv"
 	"strings"
 	"unicode/utf8"
 
 	tea "github.com/charmbracelet/bubbletea"
 
+	"github.com/lleontor705/opencode-model-selector/internal/agentcatalog"
 	"github.com/lleontor705/opencode-model-selector/internal/appname"
 	"github.com/lleontor705/opencode-model-selector/internal/config"
 	"github.com/lleontor705/opencode-model-selector/internal/opencode"
@@ -152,6 +153,20 @@ func parseFlags(args []string) (cliOptions, int) {
 //
 // Spec: REQ-CMD-001, REQ-CMD-004
 func run(args []string) int {
+	return runWithAgentDiscovery(args, func(cfg *config.Config) agentDiscoverer {
+		return agentcatalog.Discovery{Runtime: opencode.NewRuntimeAgentProbe(), Static: cfg}
+	})
+}
+
+// agentDiscoverer is the narrow seam used by CLI tests to avoid starting a
+// real OpenCode runtime. Production constructs agentcatalog.Discovery above.
+type agentDiscoverer interface {
+	Discover(context.Context, string) agentcatalog.Catalog
+}
+
+type agentDiscoveryFactory func(*config.Config) agentDiscoverer
+
+func runWithAgentDiscovery(args []string, newDiscovery agentDiscoveryFactory) int {
 	opts, exitCode := parseFlags(args)
 	if exitCode != 0 {
 		return exitCode
@@ -205,7 +220,20 @@ func run(args []string) int {
 		}
 
 	case modeListAgents:
-		if err := runListAgents(cfg); err != nil {
+		if newDiscovery == nil {
+			fmt.Fprintln(os.Stderr, "Error: agent discovery is unavailable")
+			return 1
+		}
+		directory, err := os.Getwd()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error resolving runtime directory: %v\n", err)
+			return 1
+		}
+		catalog := newDiscovery(cfg).Discover(context.Background(), directory)
+		if catalog.Degraded {
+			fmt.Fprintln(os.Stderr, "Warning: runtime agent discovery failed; using static catalog")
+		}
+		if err := runListAgents(catalog); err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			return 1
 		}
@@ -340,11 +368,9 @@ func runListModels(cfg *config.Config, models []opencode.Model) error {
 	return formatModels(os.Stdout, models)
 }
 
-// runListAgents prints all agents with their current field values to stdout.
-//
-// Spec: REQ-CMD-003 — implemented in G3-T2.
-func runListAgents(cfg *config.Config) error {
-	return formatAgents(os.Stdout, cfg)
+// runListAgents prints the authoritative unified catalog to stdout.
+func runListAgents(catalog agentcatalog.Catalog) error {
+	return formatAgents(os.Stdout, catalog)
 }
 
 // runTUI launches the interactive Bubbletea terminal UI in alt-screen mode.
@@ -431,169 +457,35 @@ func formatModels(w io.Writer, models []opencode.Model) error {
 	return nil
 }
 
-// agentFieldDef defines one of the 6 editable agent fields and how to render it.
-type agentFieldDef struct {
-	name string
-	kind fieldKind
-}
-
-// fieldKind controls how a field value extracted from config is formatted.
-type fieldKind int
-
-const (
-	fieldString fieldKind = iota
-	fieldFloat
-	fieldInt
-	fieldBool
-)
-
-// agentFields is the ordered list of fields shown for every agent.
-var agentFields = []agentFieldDef{
-	{"model", fieldString},
-	{"temperature", fieldFloat},
-	{"top_p", fieldFloat},
-	{"color", fieldString},
-	{"steps", fieldInt},
-	{"disable", fieldBool},
-}
-
-// formatFieldValue extracts a field from config and formats it according to kind.
-// Boolean fields default to "false" when absent; all other kinds show "(none)".
-//
-// Reads the MERGED value (JSON > project md > global md) so a markdown-backed
-// agent displays its actual md model/temperature/etc. instead of "(none)".
-// This is DISPLAY only; mutations still go through SetAgentField (JSON only).
-func formatFieldValue(cfg *config.Config, agentName, fieldName string, kind fieldKind) string {
-	val, ok := cfg.GetMergedAgentField(agentName, fieldName)
-	if !ok || val == nil {
-		if kind == fieldBool {
-			return "false"
-		}
-		return "(none)"
-	}
-
-	switch kind {
-	case fieldString:
-		s, ok := val.(string)
-		if !ok {
-			return "(none)"
-		}
-		return s
-	case fieldFloat:
-		f, ok := val.(float64)
-		if !ok {
-			return "(none)"
-		}
-		return strconv.FormatFloat(f, 'f', -1, 64)
-	case fieldInt:
-		f, ok := val.(float64)
-		if !ok {
-			return "(none)"
-		}
-		return strconv.FormatInt(int64(f), 10)
-	case fieldBool:
-		b, ok := val.(bool)
-		if !ok {
-			return "false"
-		}
-		if b {
-			return "true"
-		}
-		return "false"
-	}
-	return "(none)"
-}
-
-// writeAgentBlock writes one agent's name and 6 fields to w.
-func writeAgentBlock(w io.Writer, cfg *config.Config, name string) error {
-	// Agent name with optional [H] marker for hidden agents.
-	if cfg.IsAgentHidden(name) {
-		if _, err := fmt.Fprintf(w, "  %s [H]\n", name); err != nil {
-			return err
-		}
-	} else {
-		if _, err := fmt.Fprintf(w, "  %s\n", name); err != nil {
-			return err
-		}
-	}
-
-	// Six editable fields, label column padded to 12 runes + space.
-	for _, f := range agentFields {
-		val := formatFieldValue(cfg, name, f.name, f.kind)
-		marker := ""
-		if f.name == "disable" && val == "true" {
-			marker = "                   [DISABLED]"
-		}
-		if _, err := fmt.Fprintf(w, "    %-12s %s%s\n", f.name+":", val, marker); err != nil {
-			return err
-		}
-	}
-	if _, err := fmt.Fprintln(w); err != nil { // blank line between agents
+// formatAgents writes a tab-separated, script-friendly catalog containing only
+// section, name, mode, model, and status. Bucket ordering comes from Catalog.
+func formatAgents(w io.Writer, catalog agentcatalog.Catalog) error {
+	if _, err := fmt.Fprintln(w, "section\tname\tmode\tmodel\tstatus"); err != nil {
 		return err
 	}
-	return nil
-}
-
-// formatAgents writes the agent listing to w.
-//
-// Output structure (REQ-CMD-003):
-//   - "OpenCode Agents" header
-//   - "Global Default Model: <model>" (or "(none)")
-//   - "── Primary Agents ──..." with each primary agent and 6 fields
-//   - "── Subagents ──..." with each subagent and 6 fields
-//   - System agents (compactación, title, summary) are excluded
-//   - Disabled agents marked with [DISABLED]
-//   - Hidden agents marked with [H]
-func formatAgents(w io.Writer, cfg *config.Config) error {
-	// Header
-	if _, err := fmt.Fprintln(w, "OpenCode Agents"); err != nil {
-		return err
+	sections := []struct {
+		name    string
+		records []agentcatalog.AgentRecord
+	}{
+		{name: "Primary", records: catalog.Buckets.Primary},
+		{name: "Subagent", records: catalog.Buckets.Subagent},
+		{name: "All", records: catalog.Buckets.All},
 	}
-	if _, err := fmt.Fprintln(w); err != nil {
-		return err
-	}
-
-	// Global default model
-	globalModel, ok := cfg.GetGlobalModel()
-	if ok {
-		if _, err := fmt.Fprintf(w, "Global Default Model: %s\n", globalModel); err != nil {
-			return err
-		}
-	} else {
-		if _, err := fmt.Fprintln(w, "Global Default Model: (none)"); err != nil {
-			return err
+	for _, section := range sections {
+		for _, record := range section.records {
+			status := "custom"
+			switch {
+			case catalog.Degraded:
+				status = "degraded"
+			case record.Native:
+				status = "native"
+			case record.Hidden:
+				status = "hidden(custom)"
+			}
+			if _, err := fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", section.name, record.Name, record.Role, record.Model, status); err != nil {
+				return err
+			}
 		}
 	}
-	if _, err := fmt.Fprintln(w); err != nil {
-		return err
-	}
-
-	// Get agents grouped by mode
-	primary, subagents, _ := cfg.GetAgents()
-
-	// Sort alphabetically for deterministic output
-	sort.Strings(primary)
-	sort.Strings(subagents)
-
-	// Primary agents section
-	if _, err := fmt.Fprintln(w, separatorLine("Primary Agents")); err != nil {
-		return err
-	}
-	for _, name := range primary {
-		if err := writeAgentBlock(w, cfg, name); err != nil {
-			return err
-		}
-	}
-
-	// Subagents section
-	if _, err := fmt.Fprintln(w, separatorLine("Subagents")); err != nil {
-		return err
-	}
-	for _, name := range subagents {
-		if err := writeAgentBlock(w, cfg, name); err != nil {
-			return err
-		}
-	}
-
 	return nil
 }

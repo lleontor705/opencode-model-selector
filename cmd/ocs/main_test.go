@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -11,6 +12,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/lleontor705/opencode-model-selector/internal/agentcatalog"
 	"github.com/lleontor705/opencode-model-selector/internal/config"
 	"github.com/lleontor705/opencode-model-selector/internal/opencode"
 )
@@ -356,219 +358,48 @@ func TestFormatModels_ProvidersSortedAlphabetically(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// formatAgents — Agent Listing Output (REQ-CMD-003)
-//
-// formatAgents writes the agent listing to an io.Writer, making it testable
-// with bytes.Buffer.
+// formatAgents — authoritative catalog listing (T13)
 // ---------------------------------------------------------------------------
 
-// TestFormatAgents_HeaderPresent verifies the output contains the header.
-//
-// Spec: REQ-CMD-003 — Scenario: header
-func TestFormatAgents_HeaderPresent(t *testing.T) {
-	cfg := loadTestConfig(t)
+func TestFormatAgents_OnlyCatalogColumnsInDeterministicSectionOrder(t *testing.T) {
+	hidden := agentcatalog.AgentRecord{Name: "secret", Role: agentcatalog.RoleSubagent, Hidden: true, Model: "vendor/secret"}
+	catalog := agentcatalog.Catalog{Buckets: agentcatalog.Classify([]agentcatalog.AgentRecord{
+		{Name: "catch-all", Role: agentcatalog.RoleAll, Model: "vendor/all"},
+		hidden,
+		{Name: "Build", Role: agentcatalog.RolePrimary, Native: true, Model: "vendor/build"},
+		{Name: "custom", Role: agentcatalog.RolePrimary, Model: "vendor/custom"},
+	})}
+
 	var buf bytes.Buffer
-	err := formatAgents(&buf, cfg)
-
-	require.NoError(t, err)
-	assert.Contains(t, buf.String(), "OpenCode Agents")
-}
-
-// TestFormatAgents_GlobalModelNotSet verifies "(none)" appears when no global
-// model is configured.
-//
-// Spec: REQ-CMD-003 — Scenario: global default model not set
-func TestFormatAgents_GlobalModelNotSet(t *testing.T) {
-	cfg := loadTestConfig(t)
-	var buf bytes.Buffer
-	err := formatAgents(&buf, cfg)
-
-	require.NoError(t, err)
-	assert.Contains(t, buf.String(), "Global Default Model: (none)")
-}
-
-// TestFormatAgents_GlobalModelSet verifies the global model value appears when
-// set.
-//
-// Spec: REQ-CMD-003 — Scenario: global default model set
-func TestFormatAgents_GlobalModelSet(t *testing.T) {
-	cfg := loadTestConfig(t)
-	cfg.SetGlobalModel("opencode-go/glm-5.2")
-	var buf bytes.Buffer
-	err := formatAgents(&buf, cfg)
-
-	require.NoError(t, err)
-	assert.Contains(t, buf.String(), "Global Default Model: opencode-go/glm-5.2")
-}
-
-// TestFormatAgents_PrimaryAgentsSection verifies the primary agents section
-// exists and contains the known primary agents.
-//
-// Spec: REQ-CMD-003 — Scenario: primary agents section
-func TestFormatAgents_PrimaryAgentsSection(t *testing.T) {
-	cfg := loadTestConfig(t)
-	var buf bytes.Buffer
-	err := formatAgents(&buf, cfg)
-	require.NoError(t, err)
-
-	output := buf.String()
-	assert.Contains(t, output, "Primary Agents")
-	assert.Contains(t, output, "build")
-	assert.Contains(t, output, "plan")
-}
-
-// TestFormatAgents_SubagentsSection verifies the subagents section exists and
-// contains known subagents.
-//
-// Spec: REQ-CMD-003 — Scenario: subagents section
-func TestFormatAgents_SubagentsSection(t *testing.T) {
-	cfg := loadTestConfig(t)
-	var buf bytes.Buffer
-	err := formatAgents(&buf, cfg)
-	require.NoError(t, err)
-
-	output := buf.String()
-	assert.Contains(t, output, "Subagents")
-	assert.Contains(t, output, "code-reviewer")
-	assert.Contains(t, output, "parallel-dispatch")
-}
-
-// TestFormatAgents_AgentWithModelShowsValue verifies that an agent with a model
-// field shows the model value.
-//
-// Spec: REQ-CMD-003 — Scenario: agent model field
-func TestFormatAgents_AgentWithModelShowsValue(t *testing.T) {
-	cfg := loadTestConfig(t)
-	var buf bytes.Buffer
-	err := formatAgents(&buf, cfg)
-	require.NoError(t, err)
-
-	assert.Contains(t, buf.String(), "anthropic/claude-sonnet-4-20250514",
-		"code-reviewer model must appear in output")
-}
-
-// TestFormatAgents_AgentWithoutModelShowsNone verifies that an agent without a
-// model shows "(none)" for the model field.
-//
-// Spec: REQ-CMD-003 — Scenario: agent without model
-func TestFormatAgents_AgentWithoutModelShowsNone(t *testing.T) {
-	cfg := loadTestConfig(t)
-	var buf bytes.Buffer
-	err := formatAgents(&buf, cfg)
-	require.NoError(t, err)
-
-	output := buf.String()
-	// build has no model field — should show "(none)" in its section
-	buildIdx := strings.Index(output, "build")
-	require.GreaterOrEqual(t, buildIdx, 0, "build must appear")
-	buildSection := output[buildIdx:]
-	// Within build's section, "model:" must show "(none)"
-	modelIdx := strings.Index(buildSection, "model:")
-	require.GreaterOrEqual(t, modelIdx, 0, "model field must appear")
-	assert.Contains(t, buildSection[modelIdx:], "(none)",
-		"build model must be (none)")
-}
-
-// TestFormatAgents_TemperatureShownAsFloat verifies temperature shows as float.
-//
-// Spec: REQ-CMD-003 — "Temperature/top_p show as float"
-func TestFormatAgents_TemperatureShownAsFloat(t *testing.T) {
-	cfg := loadTestConfig(t)
-	var buf bytes.Buffer
-	err := formatAgents(&buf, cfg)
-	require.NoError(t, err)
-
-	// plan has temperature: 0.4
-	assert.Contains(t, buf.String(), "0.4",
-		"temperature must show as 0.4")
-	// Ensure we're NOT showing "0.4000" or similar
-	assert.NotContains(t, buf.String(), "0.4000",
-		"temperature must not have trailing zeros")
-}
-
-// TestFormatAgents_DisabledAgentMarked verifies that disabled agents show the
-// [DISABLED] marker.
-//
-// Spec: REQ-CMD-003 — Scenario: disabled agent marker
-func TestFormatAgents_DisabledAgentMarked(t *testing.T) {
-	cfg := loadTestConfig(t)
-	var buf bytes.Buffer
-	err := formatAgents(&buf, cfg)
-	require.NoError(t, err)
-
-	assert.Contains(t, buf.String(), "[DISABLED]",
-		"disabled agent (build) must have [DISABLED] marker")
-}
-
-// TestFormatAgents_HiddenAgentMarked verifies that hidden agents show the [H]
-// marker next to the agent name.
-//
-// Spec: REQ-CMD-003 — Scenario: hidden agent marker
-func TestFormatAgents_HiddenAgentMarked(t *testing.T) {
-	cfg := loadTestConfig(t)
-	var buf bytes.Buffer
-	err := formatAgents(&buf, cfg)
-	require.NoError(t, err)
-
-	assert.Contains(t, buf.String(), "parallel-dispatch [H]",
-		"hidden agent (parallel-dispatch) must have [H] marker after name")
-}
-
-// TestFormatAgents_AllSixFieldsShown verifies that all 6 editable field labels
-// appear in the output.
-//
-// Spec: REQ-CMD-003 — "Each agent shows all 6 editable fields"
-func TestFormatAgents_AllSixFieldsShown(t *testing.T) {
-	cfg := loadTestConfig(t)
-	var buf bytes.Buffer
-	err := formatAgents(&buf, cfg)
-	require.NoError(t, err)
-
-	output := buf.String()
-	fields := []string{"model:", "temperature:", "top_p:", "color:", "steps:", "disable:"}
-	for _, field := range fields {
-		assert.Contains(t, output, field, "field %q must appear", field)
+	require.NoError(t, formatAgents(&buf, catalog))
+	assert.Equal(t, "section\tname\tmode\tmodel\tstatus\n"+
+		"Primary\tBuild\tprimary\tvendor/build\tnative\n"+
+		"Primary\tcustom\tprimary\tvendor/custom\tcustom\n"+
+		"Subagent\tsecret\tsubagent\tvendor/secret\thidden(custom)\n"+
+		"All\tcatch-all\tall\tvendor/all\tcustom\n", buf.String())
+	for _, removed := range []string{"temperature", "top_p", "color", "steps", "disable", "Global Default Model"} {
+		assert.NotContains(t, buf.String(), removed)
 	}
 }
 
-// TestFormatAgents_SystemAgentsExcluded verifies that system agents do not
-// appear in the output.
-//
-// Spec: REQ-CMD-003 — Scenario: system agents excluded
-func TestFormatAgents_SystemAgentsExcluded(t *testing.T) {
-	cfg := loadTestConfig(t)
-	var buf bytes.Buffer
-	err := formatAgents(&buf, cfg)
-	require.NoError(t, err)
-
-	output := buf.String()
-	for _, name := range []string{"compactación", "title", "summary"} {
-		assert.NotContains(t, output, name,
-			"system agent %q must NOT appear in output", name)
+func TestFormatAgents_DegradedCatalogMarksEveryFallbackRecord(t *testing.T) {
+	catalog := agentcatalog.Catalog{
+		Buckets:  agentcatalog.Classify([]agentcatalog.AgentRecord{{Name: "fallback", Role: agentcatalog.RoleAll}}),
+		Degraded: true,
 	}
+	var buf bytes.Buffer
+	require.NoError(t, formatAgents(&buf, catalog))
+	assert.Equal(t, "section\tname\tmode\tmodel\tstatus\nAll\tfallback\tall\t\tdegraded\n", buf.String())
 }
 
-// TestFormatAgents_NonSystemAgentCount verifies that exactly 11 non-system
-// agents appear in the output (14 total - 3 system).
-//
-// Spec: REQ-CMD-003 — Scenario: only non-system agents shown
-func TestFormatAgents_NonSystemAgentCount(t *testing.T) {
-	cfg := loadTestConfig(t)
-	var buf bytes.Buffer
-	err := formatAgents(&buf, cfg)
-	require.NoError(t, err)
+type fakeAgentDiscovery struct {
+	catalog   agentcatalog.Catalog
+	directory string
+}
 
-	output := buf.String()
-	// All 11 non-system agents must appear
-	expectedAgents := []string{
-		"build", "plan", // primary
-		"code-reviewer", "debug", "docs", "explore", "general",
-		"orchestrator", "parallel-dispatch", "security-auditor", "team-lead", // subagents
-	}
-	for _, name := range expectedAgents {
-		assert.Contains(t, output, name,
-			"non-system agent %q must appear", name)
-	}
+func (f *fakeAgentDiscovery) Discover(_ context.Context, directory string) agentcatalog.Catalog {
+	f.directory = directory
+	return f.catalog
 }
 
 // ---------------------------------------------------------------------------
@@ -702,14 +533,45 @@ func TestRun_ConfigMalformed_DoesNotPrintConfigNotFound(t *testing.T) {
 // Spec: REQ-CMD-004 — "list-agents works without opencode installed"
 func TestRun_ListAgentsSucceedsWithValidConfig(t *testing.T) {
 	configPath := resolveFixtureConfigPath(t)
+	discovery := &fakeAgentDiscovery{catalog: agentcatalog.Catalog{Buckets: agentcatalog.Classify([]agentcatalog.AgentRecord{
+		{Name: "runtime-agent", Role: agentcatalog.RolePrimary, Native: true, Model: "openai/runtime"},
+	})}}
 
 	var code int
-	_ = captureStdout(t, func() {
-		code = run([]string{"--config", configPath, "--list-agents"})
+	stdout := captureStdout(t, func() {
+		code = runWithAgentDiscovery([]string{"--config", configPath, "--list-agents"}, func(cfg *config.Config) agentDiscoverer {
+			assert.Equal(t, configPath, cfg.Path(), "config remains rooted at --config")
+			return discovery
+		})
 	})
 
-	assert.Equal(t, 0, code,
-		"list-agents with valid config should succeed (exit 0) without opencode")
+	require.Equal(t, 0, code)
+	assert.Contains(t, stdout, "Primary\truntime-agent\tprimary\topenai/runtime\tnative")
+	wantCWD, err := os.Getwd()
+	require.NoError(t, err)
+	assert.Equal(t, wantCWD, discovery.directory, "runtime discovery must use current cwd")
+}
+
+func TestRun_ListAgentsRuntimeFailureUsesFallbackWithoutPollutingStdout(t *testing.T) {
+	configPath := resolveFixtureConfigPath(t)
+	discovery := &fakeAgentDiscovery{catalog: agentcatalog.Catalog{
+		Buckets:  agentcatalog.Classify([]agentcatalog.AgentRecord{{Name: "fallback", Role: agentcatalog.RoleAll, Model: "openai/fallback"}}),
+		Degraded: true,
+	}}
+
+	var code int
+	var stdout string
+	stderr := captureStderr(t, func() {
+		stdout = captureStdout(t, func() {
+			code = runWithAgentDiscovery([]string{"--config", configPath, "--list-agents"}, func(*config.Config) agentDiscoverer {
+				return discovery
+			})
+		})
+	})
+
+	assert.Equal(t, 0, code, "successful static fallback must exit 0")
+	assert.Equal(t, "section\tname\tmode\tmodel\tstatus\nAll\tfallback\tall\topenai/fallback\tdegraded\n", stdout)
+	assert.Equal(t, "Warning: runtime agent discovery failed; using static catalog\n", stderr)
 }
 
 // TestRun_NoPanic_OnAnyErrorPath verifies that run() never panics on any
@@ -737,7 +599,9 @@ func TestRun_NoPanic_OnAnyErrorPath(t *testing.T) {
 
 	assert.NotPanics(t, func() {
 		_ = captureStdout(t, func() {
-			run([]string{"--config", configPath, "--list-agents"})
+			runWithAgentDiscovery([]string{"--config", configPath, "--list-agents"}, func(*config.Config) agentDiscoverer {
+				return &fakeAgentDiscovery{}
+			})
 		})
 	}, "valid list-agents should not panic")
 }
