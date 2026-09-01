@@ -29,13 +29,14 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"sort"
 	"strings"
 	"testing"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -137,39 +138,45 @@ const (
 // onAgentList reports whether the model is currently rendering the Agent List
 // screen, detected via the title marker in View().
 func onAgentList(m tea.Model) bool {
-	return strings.Contains(m.View(), screenMarkerAgentList) &&
-		strings.Contains(m.View(), "Primary Agents")
+	return strings.Contains(m.View().Content, screenMarkerAgentList) &&
+		strings.Contains(m.View().Content, "Primary Agents")
 }
 
 // onModelSelection reports whether the model is on the Model Selection screen.
 func onModelSelection(m tea.Model) bool {
-	return strings.Contains(m.View(), screenMarkerModelSelection)
+	return strings.Contains(m.View().Content, screenMarkerModelSelection)
 }
 
 // onSaveConfirm reports whether the model is on the Save Confirm screen.
 func onSaveConfirm(m tea.Model) bool {
-	return strings.Contains(m.View(), screenMarkerSaveConfirm)
+	return strings.Contains(m.View().Content, screenMarkerSaveConfirm)
 }
+
+// ansiSequence matches terminal escape sequences. Lipgloss v2 emits ANSI
+// styling even for non-TTY test output (v1 degraded to plain text), so raw
+// substring assertions on rendered views must compare ANSI-stripped text —
+// the design contract is ANSI-stripped semantic equivalence.
+var ansiSequence = regexp.MustCompile(`\x1b\[[0-?]*[ -/]*[@-~]`)
 
 // isDirty reports whether the dirty indicator ('*') appears in the rendered
 // status bar. The status bar shows " *" when dirty and "  " when clean.
 func isDirty(m tea.Model) bool {
 	// Look for the dirty marker anywhere in the rendered view.
 	// The status bar shows " *" when dirty and "  " when clean.
-	view := m.View()
+	view := ansiSequence.ReplaceAllString(m.View().Content, "")
 	return strings.Contains(view, " *")
 }
 
-// pressKey is a convenience wrapper that sends a KeyMsg and returns the
-// resulting model cast back to tea.Model.
-func pressKey(m tea.Model, key tea.KeyMsg) tea.Model {
+// pressKey is a convenience wrapper that sends a key press message and
+// returns the resulting model cast back to tea.Model.
+func pressKey(m tea.Model, key tea.KeyPressMsg) tea.Model {
 	updated, _ := m.Update(key)
 	return updated
 }
 
-// keyRune constructs a KeyMsg for a single rune (e.g. 'j', 'k', 's').
-func keyRune(r rune) tea.KeyMsg {
-	return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}}
+// keyRune constructs a key press message for a single rune (e.g. 'j', 'k', 's').
+func keyRune(r rune) tea.KeyPressMsg {
+	return tea.KeyPressMsg{Text: string(r)}
 }
 
 // ---------------------------------------------------------------------------
@@ -679,7 +686,7 @@ func TestIntegration_TUI_AgentListToModelSelection(t *testing.T) {
 	//   security-auditor, team-lead] — build is disabled so skipped.
 	m = pressKey(m, keyRune('j'))
 
-	m = pressKey(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m = pressKey(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	assert.True(t, onModelSelection(m),
 		"ENTER on an agent must transition directly to ModelSelection")
 }
@@ -693,7 +700,7 @@ func TestIntegration_TUI_AgentListToGlobalModelSelection(t *testing.T) {
 	require.True(t, onAgentList(m))
 
 	// Cursor starts at 0 = __global__. ENTER opens ModelSelection.
-	m = pressKey(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m = pressKey(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	assert.True(t, onModelSelection(m),
 		"ENTER on global must transition to ModelSelection screen")
 }
@@ -706,11 +713,11 @@ func TestIntegration_TUI_ModelSelectionBackViaESC(t *testing.T) {
 	m := newTUI(t)
 	// Enter ModelSelection directly from the selected agent.
 	m = pressKey(m, keyRune('j'))
-	m = pressKey(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m = pressKey(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	require.True(t, onModelSelection(m), "precondition: must be on ModelSelection")
 
 	// ESC returns to AgentList; AgentDetail no longer exists.
-	m = pressKey(m, tea.KeyMsg{Type: tea.KeyEsc})
+	m = pressKey(m, tea.KeyPressMsg{Code: tea.KeyEsc})
 	assert.True(t, onAgentList(m),
 		"ESC from ModelSelection must return to AgentList")
 }
@@ -736,9 +743,9 @@ func TestIntegration_TUI_SaveTransitionRequiresDirty(t *testing.T) {
 
 		// Make a real edit to set dirty=true: navigate to global, open model
 		// picker, select the first model. selectModelAtCursor sets dirty=true.
-		m = pressKey(m, tea.KeyMsg{Type: tea.KeyEnter}) // global → ModelSelection
+		m = pressKey(m, tea.KeyPressMsg{Code: tea.KeyEnter}) // global → ModelSelection
 		require.True(t, onModelSelection(m))
-		m = pressKey(m, tea.KeyMsg{Type: tea.KeyEnter}) // select first model → back to AgentList
+		m = pressKey(m, tea.KeyPressMsg{Code: tea.KeyEnter}) // select first model → back to AgentList
 		require.True(t, onAgentList(m), "after model select, must return to AgentList")
 		require.True(t, isDirty(m), "selecting a model must mark the model dirty")
 
@@ -766,7 +773,7 @@ func TestIntegration_TUI_CtrlCAlwaysQuits(t *testing.T) {
 			name: "from ModelSelection",
 			setup: func(t *testing.T, m tea.Model) tea.Model {
 				m = pressKey(m, keyRune('j'))
-				return pressKey(m, tea.KeyMsg{Type: tea.KeyEnter})
+				return pressKey(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 			},
 		},
 	}
@@ -776,7 +783,7 @@ func TestIntegration_TUI_CtrlCAlwaysQuits(t *testing.T) {
 			m := newTUI(t)
 			m = tt.setup(t, m)
 
-			_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
+			_, cmd := m.Update(tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl})
 			require.NotNil(t, cmd, "Ctrl+C must produce a non-nil command")
 			assert.IsType(t, tea.QuitMsg{}, cmd(),
 				"Ctrl+C must produce a tea.QuitMsg")
@@ -796,7 +803,7 @@ func TestIntegration_TUI_ModelSelectionUpdatesGlobalModel(t *testing.T) {
 	// top-level "model" key. The global row renders as:
 	//   [Global Default Model]
 	//     model: (none)
-	beforeView := m.View()
+	beforeView := m.View().Content
 	globalIdx := strings.Index(beforeView, "[Global Default Model]")
 	require.GreaterOrEqual(t, globalIdx, 0,
 		"precondition: global model row must exist in View")
@@ -805,10 +812,10 @@ func TestIntegration_TUI_ModelSelectionUpdatesGlobalModel(t *testing.T) {
 		"precondition: fixture has no global model, so View must show (none)")
 
 	// Navigate: ENTER on global → ModelSelection → ENTER selects first model.
-	m = pressKey(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m = pressKey(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	require.True(t, onModelSelection(m))
 
-	m = pressKey(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m = pressKey(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	require.True(t, onAgentList(m), "after selecting, must return to AgentList")
 	require.True(t, isDirty(m), "model must be dirty after an edit")
 
@@ -818,7 +825,7 @@ func TestIntegration_TUI_ModelSelectionUpdatesGlobalModel(t *testing.T) {
 	//     model: <value>
 	// followed by the "Primary Agents" section header. Extract only the
 	// global block to avoid false matches from other agents' "(none)" rows.
-	afterView := m.View()
+	afterView := m.View().Content
 	globalIdx = strings.Index(afterView, "[Global Default Model]")
 	require.GreaterOrEqual(t, globalIdx, 0)
 
@@ -856,7 +863,7 @@ func TestIntegration_TUI_DisabledAgentNotSelectable(t *testing.T) {
 	// NOT on the disabled 'build'. We verify by pressing ENTER and checking
 	// selecting a model must update plan and must not update disabled build.
 	m = pressKey(m, keyRune('j'))
-	m = pressKey(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m = pressKey(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	require.True(t, onModelSelection(m))
 }
 
@@ -878,13 +885,13 @@ func TestIntegration_TUI_ModelOnlyWritePreservesMarkdownAndOtherJSONFields(t *te
 	}})}
 	grouped := opencode.GroupByProvider([]opencode.Model{{Provider: "new", ID: "model", FullName: "new/model"}})
 	var m tea.Model = tui.NewModelWithCatalog(cfg, grouped, 0, catalog)
-	m = pressKey(m, keyRune('j'))                   // global -> markdown-agent
-	m = pressKey(m, tea.KeyMsg{Type: tea.KeyEnter}) // direct model picker
+	m = pressKey(m, keyRune('j'))                        // global -> markdown-agent
+	m = pressKey(m, tea.KeyPressMsg{Code: tea.KeyEnter}) // direct model picker
 	require.True(t, onModelSelection(m))
-	m = pressKey(m, tea.KeyMsg{Type: tea.KeyEnter}) // select only model
+	m = pressKey(m, tea.KeyPressMsg{Code: tea.KeyEnter}) // select only model
 	m = pressKey(m, keyRune('s'))
 	require.True(t, onSaveConfirm(m))
-	m = pressKey(m, tea.KeyMsg{Type: tea.KeyEnter}) // persist
+	m = pressKey(m, tea.KeyPressMsg{Code: tea.KeyEnter}) // persist
 
 	reloaded, err := config.LoadConfig(configPath)
 	require.NoError(t, err)

@@ -15,10 +15,10 @@ import (
 	"context"
 	"sort"
 
-	"github.com/charmbracelet/bubbles/textinput"
-	"github.com/charmbracelet/bubbles/viewport"
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/bubbles/v2/textinput"
+	"charm.land/bubbles/v2/viewport"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 
 	"github.com/lleontor705/opencode-model-selector/internal/agentcatalog"
 	"github.com/lleontor705/opencode-model-selector/internal/appname"
@@ -56,14 +56,18 @@ const (
 	// bulk operations. ENTER transitions to ScreenModelSelection with
 	// fieldEditing="bulk-list".
 	ScreenAgentMultiSelect
+	// ScreenVariantSelection shows available variants for the selected model.
+	ScreenVariantSelection
 )
 
-// Change records one model-only mutation pending persistence. Target is
+// Change records one model or variant mutation pending persistence. Target is
 // "global" or a catalog agent name; no generic config field is representable.
 type Change struct {
-	Target   string
-	OldModel string
-	NewModel string
+	Target     string
+	OldModel   string
+	NewModel   string
+	OldVariant string
+	NewVariant string
 }
 
 // Model is the root Bubbletea model. It carries ALL TUI state in a single
@@ -89,10 +93,15 @@ type Model struct {
 
 	// Each selectable screen owns its cursor so nested screens cannot overwrite
 	// the selection that must be restored when returning.
-	agentCursor int
-	modelCursor int
+	agentCursor   int
+	modelCursor   int
+	variantCursor int
 	// selectedAgent is the agent whose model is being edited.
 	selectedAgent string
+	// pendingSelectedModel is the model chosen in ScreenModelSelection awaiting variant selection.
+	pendingSelectedModel opencode.Model
+	// availableVariants holds the compatible variants for pendingSelectedModel.
+	availableVariants []opencode.VariantDescriptor
 	// navigationStack stores immutable screen origins for nested transitions.
 	navigationStack []appState
 
@@ -119,9 +128,10 @@ type Model struct {
 	filterInput textinput.Model
 	// Each scrolling screen owns a Bubbles viewport. The existing screen-owned
 	// cursors remain the source of truth; viewport offsets only control clipping.
-	agentViewport viewport.Model
-	modelViewport viewport.Model
-	saveViewport  viewport.Model
+	agentViewport   viewport.Model
+	modelViewport   viewport.Model
+	variantViewport viewport.Model
+	saveViewport    viewport.Model
 	// filteredModels is the result of applying filterInput.Value() to
 	// flatModels. Maintained by model_select.go in a later task.
 	filteredModels []opencode.Model
@@ -209,13 +219,21 @@ func NewModelWithCatalog(cfg *config.Config, grouped map[string][]opencode.Model
 	for _, models := range grouped {
 		m.flatModels = append(m.flatModels, models...)
 	}
+	if cfg != nil && cfg.Data() != nil {
+		for i := range m.flatModels {
+			if len(m.flatModels[i].Variants) == 0 {
+				m.flatModels[i].Variants = opencode.ExtractModelVariants(cfg.Data(), m.flatModels[i].Provider, m.flatModels[i].ID)
+			}
+		}
+	}
 
 	// Initialize textinput sub-components so later handlers can Update them
 	// without re-allocating.
 	m.filterInput = textinput.New()
-	m.agentViewport = viewport.New(0, 0)
-	m.modelViewport = viewport.New(0, 0)
-	m.saveViewport = viewport.New(0, 0)
+	m.agentViewport = viewport.New()
+	m.modelViewport = viewport.New()
+	m.variantViewport = viewport.New()
+	m.saveViewport = viewport.New()
 
 	for _, record := range catalog.Buckets.Primary {
 		m.primaryAgents = append(m.primaryAgents, record.Name)
@@ -299,6 +317,11 @@ func (m *Model) popScreen() {
 		m.state = ScreenAgentList
 		return
 	}
+	if m.state == ScreenVariantSelection {
+		m.pendingSelectedModel = opencode.Model{}
+		m.availableVariants = nil
+		m.variantCursor = 0
+	}
 	if m.state == ScreenModelSelection &&
 		(m.fieldEditing == fieldEditingBulkAll || m.fieldEditing == fieldEditingBulkList) {
 		m.fieldEditing = ""
@@ -325,10 +348,9 @@ func (m *Model) RecordModelChange(target, oldModel, newModel string) {
 		if change.Target != target {
 			continue
 		}
-		if change.OldModel == newModel {
+		change.NewModel = newModel
+		if change.OldModel == change.NewModel && change.OldVariant == change.NewVariant {
 			m.changes = append(m.changes[:i], m.changes[i+1:]...)
-		} else {
-			change.NewModel = newModel
 		}
 		m.dirty = len(m.changes) > 0
 		return
@@ -339,6 +361,37 @@ func (m *Model) RecordModelChange(target, oldModel, newModel string) {
 		return
 	}
 	m.changes = append(m.changes, Change{Target: target, OldModel: oldModel, NewModel: newModel})
+	m.dirty = true
+}
+
+// RecordChange coalesces independent model and variant mutations by target.
+// Reverting both model and variant to their original values removes the net change.
+func (m *Model) RecordChange(target, oldModel, newModel, oldVariant, newVariant string) {
+	for i := range m.changes {
+		change := &m.changes[i]
+		if change.Target != target {
+			continue
+		}
+		change.NewModel = newModel
+		change.NewVariant = newVariant
+		if change.OldModel == change.NewModel && change.OldVariant == change.NewVariant {
+			m.changes = append(m.changes[:i], m.changes[i+1:]...)
+		}
+		m.dirty = len(m.changes) > 0
+		return
+	}
+
+	if oldModel == newModel && oldVariant == newVariant {
+		m.dirty = len(m.changes) > 0
+		return
+	}
+	m.changes = append(m.changes, Change{
+		Target:     target,
+		OldModel:   oldModel,
+		NewModel:   newModel,
+		OldVariant: oldVariant,
+		NewVariant: newVariant,
+	})
 	m.dirty = true
 }
 
@@ -354,19 +407,22 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
-		m.filterInput.Width = max(1, msg.Width-lipgloss.Width("🔍 Search: ")-1)
-		m.agentViewport.Width = max(1, msg.Width)
-		m.agentViewport.Height = agentListViewportHeight(m)
-		m.modelViewport.Width = max(1, msg.Width)
-		m.modelViewport.Height = modelSelectionViewportHeight(m)
-		m.saveViewport.Width = max(1, msg.Width)
-		m.saveViewport.Height = saveReviewViewportHeight(m)
+		m.filterInput.SetWidth(max(1, msg.Width-lipgloss.Width("🔍 Search: ")-1))
+		m.agentViewport.SetWidth(max(1, msg.Width))
+		m.agentViewport.SetHeight(agentListViewportHeight(m))
+		m.modelViewport.SetWidth(max(1, msg.Width))
+		m.modelViewport.SetHeight(modelSelectionViewportHeight(m))
+		m.variantViewport.SetWidth(max(1, msg.Width))
+		m.variantViewport.SetHeight(variantSelectionViewportHeight(m))
+		m.saveViewport.SetWidth(max(1, msg.Width))
+		m.saveViewport.SetHeight(saveReviewViewportHeight(m))
 		syncAgentViewport(&m)
 		syncModelViewport(&m)
+		syncVariantViewport(&m)
 		syncSaveViewport(&m)
 		return m, nil
 
-	case tea.KeyMsg:
+	case tea.KeyPressMsg:
 		// Bubble Tea renders after every Update. A successful save therefore gets
 		// one complete Agent List frame before the next user action clears it.
 		if m.saveSuccess {
@@ -387,7 +443,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 		// Ctrl+C: show quit confirmation if dirty, else quit
-		if msg.Type == tea.KeyCtrlC {
+		if msg.Code == 'c' && msg.Mod.Contains(tea.ModCtrl) {
 			if m.dirty {
 				m.quitConfirm = true
 				return m, nil
@@ -399,15 +455,22 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.state == ScreenModelSelection {
 			return updateModelSelection(m, msg)
 		}
+		if m.state == ScreenVariantSelection {
+			return updateVariantSelection(m, msg)
+		}
 		if m.state == ScreenSaveConfirm {
 			return updateSaveConfirm(m, msg)
 		}
 		if m.state == ScreenAgentMultiSelect {
-			return updateAgentMultiSelect(m, msg)
+			updatedM, cmd := updateAgentMultiSelect(m, msg)
+			if m.state != ScreenModelSelection && updatedM.state == ScreenModelSelection && cmd == nil {
+				cmd = updatedM.filterInput.Focus()
+			}
+			return updatedM, cmd
 		}
 
 		// Printable q/s are commands only on non-input screens.
-		if msg.Type == tea.KeyRunes && len(msg.Runes) == 1 && msg.Runes[0] == 'q' {
+		if msg.Text == "q" {
 			if m.dirty {
 				m.quitConfirm = true
 				return m, nil
@@ -416,7 +479,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 		// 's': transition to save-confirm if dirty
-		if msg.Type == tea.KeyRunes && len(msg.Runes) == 1 && msg.Runes[0] == 's' {
+		if msg.Text == "s" {
 			if m.dirty {
 				m.pushScreen(ScreenSaveConfirm)
 			}
@@ -428,23 +491,37 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Screen-specific key dispatch
 		switch m.state {
 		case ScreenAgentList:
-			return updateAgentList(m, msg)
+			updatedM, cmd := updateAgentList(m, msg)
+			if m.state != ScreenModelSelection && updatedM.state == ScreenModelSelection && cmd == nil {
+				cmd = updatedM.filterInput.Focus()
+			}
+			return updatedM, cmd
 		}
 
 		return m, nil
 	}
 
-	// Non-key, non-resize messages are passed through unchanged. Sub-components
-	// (textinput) will intercept their own messages in later tasks.
+	// Non-key, non-resize messages are routed to active screens/sub-components.
+	if m.state == ScreenModelSelection {
+		return updateModelSelection(m, msg)
+	}
+	if m.state == ScreenVariantSelection {
+		return updateVariantSelection(m, msg)
+	}
+
 	return m, nil
 }
 
-// View dispatches to the per-screen renderer based on the current state.
-//
-// Per-screen rendering is implemented in G2-T2 through G2-T5. Until those
-// land, every screen returns a non-empty placeholder so the dispatcher is
-// fully exercised by tests and a manual launch does not crash.
-func (m Model) View() string {
+// View dispatches to the per-screen renderer based on the current state and
+// returns a Bubble Tea v2 View whose Content carries the rendered screen body
+// and whose AltScreen flag keeps the TUI in the alternate screen buffer.
+func (m Model) View() tea.View {
+	return tea.View{Content: m.renderBody(), AltScreen: true}
+}
+
+// renderBody builds the plain-text screen body. Error and terminal-too-small
+// paths flow through the same wrapper as the regular screens.
+func (m Model) renderBody() string {
 	// Error-tolerant path: if no config was supplied, surface an error
 	// message instead of dereferencing a nil pointer in any screen handler.
 	if m.config == nil {
@@ -460,6 +537,8 @@ func (m Model) View() string {
 		return viewAgentList(m)
 	case ScreenModelSelection:
 		return viewModelSelection(m)
+	case ScreenVariantSelection:
+		return viewVariantSelection(m)
 	case ScreenSaveConfirm:
 		return viewSaveConfirm(m)
 	case ScreenAgentMultiSelect:
@@ -470,14 +549,14 @@ func (m Model) View() string {
 }
 
 func ensureViewportRange(vp *viewport.Model, start, end int) {
-	if vp.Height <= 0 {
+	if vp.Height() <= 0 {
 		return
 	}
-	if start < vp.YOffset {
+	if start < vp.YOffset() {
 		vp.SetYOffset(start)
 		return
 	}
-	if end >= vp.YOffset+vp.Height {
-		vp.SetYOffset(max(0, end-vp.Height+1))
+	if end >= vp.YOffset()+vp.Height() {
+		vp.SetYOffset(max(0, end-vp.Height()+1))
 	}
 }

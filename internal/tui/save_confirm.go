@@ -25,8 +25,8 @@ import (
 	"strconv"
 	"strings"
 
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 
 	"github.com/lleontor705/opencode-model-selector/internal/config"
 )
@@ -58,18 +58,20 @@ func viewSaveConfirm(m Model) string {
 	footer := saveReviewHelp(m.width)
 	if m.width <= 0 || m.height <= 0 {
 		content := saveReviewContent(m)
-		if content == "" {
-			return strings.Join([]string{header, footer}, "\n")
-		}
-		return strings.Join([]string{header, content, footer}, "\n")
+		body := strings.Join([]string{header, content, footer}, "\n")
+		return OverlayBoxStyle.Render(body)
 	}
 
 	syncSaveViewport(&m)
-	return strings.Join([]string{
-		clipLines(header, m.width),
+	textAreaWidth := max(1, m.width-OverlayBoxStyle.GetHorizontalFrameSize())
+	body := strings.Join([]string{
+		clipLines(header, textAreaWidth),
 		m.saveViewport.View(),
-		footer,
+		clipLines(footer, textAreaWidth),
 	}, "\n")
+
+	box := OverlayBoxStyle.Width(textAreaWidth).Render(body)
+	return clipLines(box, m.width)
 }
 
 func saveReviewHelp(width int) string {
@@ -93,10 +95,10 @@ func saveReviewHeader(m Model) string {
 			"Retention: keep "+strconv.Itoa(m.backupCount)+" backups",
 		)
 	} else {
-		parts = append(parts, "Backup: disabled (retention count is 0)")
+		parts = append(parts, WarningStyle.Render("⚠ Backup: disabled (retention count is 0)"))
 	}
 	if m.saveError != "" {
-		parts = append(parts, ErrorStyle.Render(m.saveError))
+		parts = append(parts, ErrorStyle.Render("✗ "+m.saveError))
 	}
 	return strings.Join(parts, "\n")
 }
@@ -109,8 +111,14 @@ func saveReviewContent(m Model) string {
 	b.WriteString(DiffSummary.Render(fmt.Sprintf("%d net change%s:", len(m.changes), plural(len(m.changes)))))
 	b.WriteByte('\n')
 	for _, ch := range m.changes {
-		fmt.Fprintf(&b, "  %s.model: %s -> %s\n",
-			ch.Target, formatModel(ch.OldModel), formatModel(ch.NewModel))
+		if ch.OldModel != ch.NewModel || (ch.OldVariant == "" && ch.NewVariant == "") {
+			fmt.Fprintf(&b, "  %s.model: %s -> %s\n",
+				ch.Target, formatModel(ch.OldModel), formatModel(ch.NewModel))
+		}
+		if ch.OldVariant != "" || ch.NewVariant != "" {
+			fmt.Fprintf(&b, "  %s.variant: %s -> %s\n",
+				ch.Target, formatModel(ch.OldVariant), formatModel(ch.NewVariant))
+		}
 	}
 	return strings.TrimSuffix(b.String(), "\n")
 }
@@ -119,17 +127,23 @@ func saveReviewViewportHeight(m Model) int {
 	if m.height <= 0 || m.config == nil {
 		return 0
 	}
-	fixed := lipgloss.Height(saveReviewHeader(m)) + lipgloss.Height(saveReviewHelp(m.width))
-	return max(1, m.height-fixed-2)
+	textAreaWidth := max(1, m.width-OverlayBoxStyle.GetHorizontalFrameSize())
+	headerH := lipgloss.Height(OverlayBoxStyle.Width(textAreaWidth).Render(clipLines(saveReviewHeader(m), textAreaWidth))) - OverlayBoxStyle.GetVerticalFrameSize()
+	footerH := lipgloss.Height(OverlayBoxStyle.Width(textAreaWidth).Render(clipLines(saveReviewHelp(m.width), textAreaWidth))) - OverlayBoxStyle.GetVerticalFrameSize()
+	fixed := headerH + footerH + OverlayBoxStyle.GetVerticalFrameSize()
+	return max(1, m.height-fixed)
 }
 
 func syncSaveViewport(m *Model) {
 	if m.width <= 0 || m.height <= 0 || m.config == nil {
 		return
 	}
-	m.saveViewport.Width = max(1, m.width)
-	m.saveViewport.Height = saveReviewViewportHeight(*m)
-	m.saveViewport.SetContent(clipLines(saveReviewContent(*m), m.width))
+	textAreaWidth := max(1, m.width-OverlayBoxStyle.GetHorizontalFrameSize())
+	m.saveViewport.SetWidth(textAreaWidth)
+	m.saveViewport.SetHeight(saveReviewViewportHeight(*m))
+	offset := m.saveViewport.YOffset()
+	m.saveViewport.SetContent(clipLines(saveReviewContent(*m), textAreaWidth))
+	m.saveViewport.SetYOffset(offset)
 }
 
 func formatModel(model string) string {
@@ -147,28 +161,24 @@ func formatModel(model string) string {
 //
 // Spec: REQ-TUI-007 — interaction.
 func updateSaveConfirm(m Model, msg tea.Msg) (Model, tea.Cmd) {
-	keyMsg, ok := msg.(tea.KeyMsg)
+	keyMsg, ok := msg.(tea.KeyPressMsg)
 	if !ok {
 		return m, nil
 	}
 
 	switch {
 	// --- ENTER or 'y': confirm save ---
-	case keyMsg.Type == tea.KeyEnter ||
-		(keyMsg.Type == tea.KeyRunes && len(keyMsg.Runes) == 1 &&
-			(keyMsg.Runes[0] == 'y' || keyMsg.Runes[0] == 'Y')):
+	case keyMsg.Code == tea.KeyEnter || keyMsg.Text == "y" || keyMsg.Text == "Y":
 		return performSave(m)
 
 	// --- ESC or 'n': cancel ---
-	case keyMsg.Type == tea.KeyEsc || keyMsg.Type == tea.KeyEscape ||
-		(keyMsg.Type == tea.KeyRunes && len(keyMsg.Runes) == 1 &&
-			(keyMsg.Runes[0] == 'n' || keyMsg.Runes[0] == 'N')):
+	case keyMsg.Code == tea.KeyEsc || keyMsg.Text == "n" || keyMsg.Text == "N":
 		m.popScreen()
 		return m, nil
 
 	// --- Scroll the diff while keeping modal actions fixed ---
-	case keyMsg.Type == tea.KeyUp || keyMsg.Type == tea.KeyDown ||
-		keyMsg.Type == tea.KeyPgUp || keyMsg.Type == tea.KeyPgDown:
+	case keyMsg.Code == tea.KeyUp || keyMsg.Code == tea.KeyDown ||
+		keyMsg.Code == tea.KeyPgUp || keyMsg.Code == tea.KeyPgDown:
 		syncSaveViewport(&m)
 		var cmd tea.Cmd
 		m.saveViewport, cmd = m.saveViewport.Update(keyMsg)

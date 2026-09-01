@@ -17,7 +17,7 @@ import (
 	"sort"
 	"testing"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -118,16 +118,16 @@ func TestInitAgentMultiSelect_ItemsAreSorted(t *testing.T) {
 func TestUpdateAgentMultiSelect_CursorMovement(t *testing.T) {
 	tests := []struct {
 		name   string
-		key    tea.KeyMsg
+		key    tea.KeyPressMsg
 		start  int
 		expect int
 	}{
-		{"j moves down", tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}}, 0, 1},
-		{"Down moves down", tea.KeyMsg{Type: tea.KeyDown}, 0, 1},
-		{"k at top stays 0", tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'k'}}, 0, 0},
-		{"Up at top stays 0", tea.KeyMsg{Type: tea.KeyUp}, 0, 0},
-		{"k moves up from 2", tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'k'}}, 2, 1},
-		{"Up moves up from 2", tea.KeyMsg{Type: tea.KeyUp}, 2, 1},
+		{"j moves down", tea.KeyPressMsg{Text: "j"}, 0, 1},
+		{"Down moves down", tea.KeyPressMsg{Code: tea.KeyDown}, 0, 1},
+		{"k at top stays 0", tea.KeyPressMsg{Text: "k"}, 0, 0},
+		{"Up at top stays 0", tea.KeyPressMsg{Code: tea.KeyUp}, 0, 0},
+		{"k moves up from 2", tea.KeyPressMsg{Text: "k"}, 2, 1},
+		{"Up moves up from 2", tea.KeyPressMsg{Code: tea.KeyUp}, 2, 1},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -145,7 +145,7 @@ func TestUpdateAgentMultiSelect_CursorMovement(t *testing.T) {
 func TestUpdateAgentMultiSelect_CursorStopsAtBottom(t *testing.T) {
 	m := newMultiSelectModel(t)
 	m.multiSelectCursor = len(m.multiSelectItems) - 1
-	newM, _ := updateAgentMultiSelect(m, tea.KeyMsg{Type: tea.KeyDown})
+	newM, _ := updateAgentMultiSelect(m, tea.KeyPressMsg{Code: tea.KeyDown})
 	assert.Equal(t, len(m.multiSelectItems)-1, newM.multiSelectCursor,
 		"cursor MUST stop at last item")
 }
@@ -160,11 +160,11 @@ func TestUpdateAgentMultiSelect_SpaceToggles(t *testing.T) {
 	m := newMultiSelectModel(t)
 	require.False(t, m.multiSelectChecked[0])
 
-	newM, _ := updateAgentMultiSelect(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{' '}})
+	newM, _ := updateAgentMultiSelect(m, tea.KeyPressMsg{Code: tea.KeySpace, Text: " "})
 	assert.True(t, newM.multiSelectChecked[0],
 		"SPACE MUST check the item at cursor")
 
-	newM2, _ := updateAgentMultiSelect(newM, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{' '}})
+	newM2, _ := updateAgentMultiSelect(newM, tea.KeyPressMsg{Code: tea.KeySpace, Text: " "})
 	assert.False(t, newM2.multiSelectChecked[0],
 		"SPACE again MUST uncheck the item at cursor")
 }
@@ -181,7 +181,7 @@ func TestUpdateAgentMultiSelect_EnterWithNoSelection_StaysOnScreen(t *testing.T)
 		m.multiSelectChecked[i] = false
 	}
 
-	newM, _ := updateAgentMultiSelect(m, tea.KeyMsg{Type: tea.KeyEnter})
+	newM, _ := updateAgentMultiSelect(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	assert.Equal(t, ScreenAgentMultiSelect, newM.state,
 		"ENTER with no selection MUST stay on ScreenAgentMultiSelect")
 	assert.Empty(t, newM.bulkTargets,
@@ -196,7 +196,7 @@ func TestUpdateAgentMultiSelect_EnterWithSelection_TransitionsAndPopulatesBulkTa
 	m.multiSelectChecked[0] = true
 	m.multiSelectChecked[2] = true
 
-	newM, _ := updateAgentMultiSelect(m, tea.KeyMsg{Type: tea.KeyEnter})
+	newM, _ := updateAgentMultiSelect(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 
 	assert.Equal(t, ScreenModelSelection, newM.state,
 		"ENTER with selections MUST transition to ScreenModelSelection")
@@ -219,7 +219,7 @@ func TestUpdateAgentMultiSelect_EscClearsStateAndPops(t *testing.T) {
 	m.multiSelectChecked[0] = true
 	require.Len(t, m.navigationStack, 1)
 
-	newM, _ := updateAgentMultiSelect(m, tea.KeyMsg{Type: tea.KeyEsc})
+	newM, _ := updateAgentMultiSelect(m, tea.KeyPressMsg{Code: tea.KeyEsc})
 	assert.Equal(t, ScreenAgentList, newM.state,
 		"ESC MUST pop back to the previous screen (ScreenAgentList)")
 	assert.Nil(t, newM.multiSelectItems,
@@ -270,7 +270,7 @@ func TestAgentList_MKey_TransitionsToMultiSelect(t *testing.T) {
 	m := NewModel(fixtureConfig(t), richGrouped(), 5)
 	require.Equal(t, ScreenAgentList, m.state)
 
-	newM, _ := updateAgentList(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'m'}})
+	newM, _ := updateAgentList(m, tea.KeyPressMsg{Text: "m"})
 	assert.Equal(t, ScreenAgentMultiSelect, newM.state,
 		"'m' key MUST transition to ScreenAgentMultiSelect")
 	assert.NotEmpty(t, newM.multiSelectItems,
@@ -289,7 +289,7 @@ func TestUpdate_DispatchesToAgentMultiSelect(t *testing.T) {
 	m := newMultiSelectModel(t)
 	require.Equal(t, 0, m.multiSelectCursor)
 
-	newModel, _ := m.Update(tea.KeyMsg{Type: tea.KeyDown})
+	newModel, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyDown})
 	result, ok := newModel.(Model)
 	require.True(t, ok, "Update must return the same Model type")
 	assert.Equal(t, 1, result.multiSelectCursor,
@@ -300,7 +300,7 @@ func TestUpdate_DispatchesToAgentMultiSelect(t *testing.T) {
 // ScreenAgentMultiSelect to viewAgentMultiSelect.
 func TestView_DispatchesToAgentMultiSelect(t *testing.T) {
 	m := newMultiSelectModel(t)
-	out := m.View()
+	out := m.View().Content
 	assert.Contains(t, out, "[ ]",
 		"global View() MUST dispatch ScreenAgentMultiSelect to viewAgentMultiSelect")
 }
@@ -396,24 +396,24 @@ func TestFlowB_EndToEnd(t *testing.T) {
 	m := NewModel(fixtureConfig(t), richGrouped(), 5)
 
 	// Step 1: 'm' on AgentList → ScreenAgentMultiSelect
-	m, _ = updateAgentList(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'m'}})
+	m, _ = updateAgentList(m, tea.KeyPressMsg{Text: "m"})
 	require.Equal(t, ScreenAgentMultiSelect, m.state,
 		"step 1: 'm' MUST transition to multi-select")
 
 	// Step 2: SPACE on item 0, move down, SPACE on item 1
-	m, _ = updateAgentMultiSelect(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{' '}})
+	m, _ = updateAgentMultiSelect(m, tea.KeyPressMsg{Code: tea.KeySpace, Text: " "})
 	require.True(t, m.multiSelectChecked[0],
 		"step 2a: first SPACE MUST check item 0")
 
-	m, _ = updateAgentMultiSelect(m, tea.KeyMsg{Type: tea.KeyDown})
-	m, _ = updateAgentMultiSelect(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{' '}})
+	m, _ = updateAgentMultiSelect(m, tea.KeyPressMsg{Code: tea.KeyDown})
+	m, _ = updateAgentMultiSelect(m, tea.KeyPressMsg{Code: tea.KeySpace, Text: " "})
 	require.True(t, m.multiSelectChecked[1],
 		"step 2b: second SPACE MUST check item 1")
 
 	targets := []string{m.multiSelectItems[0], m.multiSelectItems[1]}
 
 	// Step 3: ENTER → ScreenModelSelection with bulk-list
-	m, _ = updateAgentMultiSelect(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, _ = updateAgentMultiSelect(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	require.Equal(t, ScreenModelSelection, m.state,
 		"step 3: ENTER MUST transition to ScreenModelSelection")
 	require.Equal(t, fieldEditingBulkList, m.fieldEditing,
@@ -452,14 +452,14 @@ func TestFlowB_SaveConfirmWritesToDisk(t *testing.T) {
 	m := NewModel(cfg, richGrouped(), 0)
 
 	// Flow B: 'm' → check 2 → ENTER → pick model
-	m, _ = updateAgentList(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'m'}})
-	m, _ = updateAgentMultiSelect(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{' '}})
-	m, _ = updateAgentMultiSelect(m, tea.KeyMsg{Type: tea.KeyDown})
-	m, _ = updateAgentMultiSelect(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{' '}})
+	m, _ = updateAgentList(m, tea.KeyPressMsg{Text: "m"})
+	m, _ = updateAgentMultiSelect(m, tea.KeyPressMsg{Code: tea.KeySpace, Text: " "})
+	m, _ = updateAgentMultiSelect(m, tea.KeyPressMsg{Code: tea.KeyDown})
+	m, _ = updateAgentMultiSelect(m, tea.KeyPressMsg{Code: tea.KeySpace, Text: " "})
 
 	checkedAgents := []string{m.multiSelectItems[0], m.multiSelectItems[1]}
 
-	m, _ = updateAgentMultiSelect(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, _ = updateAgentMultiSelect(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	selectedModel := m.filteredModels[m.modelCursor]
 	result := selectModelAtCursor(m)
 	require.Len(t, result.changes, 2)

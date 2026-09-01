@@ -20,7 +20,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 
 	"github.com/lleontor705/opencode-model-selector/internal/agentcatalog"
 	"github.com/lleontor705/opencode-model-selector/internal/appname"
@@ -232,6 +232,7 @@ func runWithAgentDiscovery(args []string, newDiscovery agentDiscoveryFactory) in
 			fmt.Fprintf(os.Stderr, "Error getting models: %v\n", err)
 			return 1
 		}
+		models = opencode.JoinModelVariants(models, cfg.Data())
 		if err := runListModels(cfg, models); err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			return 1
@@ -267,6 +268,7 @@ func runWithAgentDiscovery(args []string, newDiscovery agentDiscoveryFactory) in
 			fmt.Fprintf(os.Stderr, "Error getting models: %v\n", err)
 			return 1
 		}
+		models = opencode.JoinModelVariants(models, cfg.Data())
 		grouped := opencode.GroupByProvider(models)
 		if err := runTUIWithDependencies(cfg, grouped, opts.backupCount, newDiscovery, newTUIModel, runTUIProgram); err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
@@ -302,6 +304,7 @@ func runApplyModel(cfg *config.Config, applyModel, agentsCSV string, backupCount
 	if err != nil {
 		return fmt.Errorf("getting models: %w", err)
 	}
+	models = opencode.JoinModelVariants(models, cfg.Data())
 	return applyModelWithModels(cfg, applyModel, agentsCSV, backupCount, models)
 }
 
@@ -398,8 +401,11 @@ func newTUIModel(cfg *config.Config, grouped map[string][]opencode.Model, backup
 	return tui.NewModelWithCatalog(cfg, grouped, backupCount, catalog)
 }
 
+// runTUIProgram launches the Bubble Tea v2 program. The alternate screen is
+// requested per-frame by the root model's View() (tea.View.AltScreen), so no
+// program-level altscreen option is passed here.
 func runTUIProgram(model tea.Model) error {
-	program := tea.NewProgram(model, tea.WithAltScreen())
+	program := tea.NewProgram(model)
 	_, err := program.Run()
 	return err
 }
@@ -465,8 +471,18 @@ func formatModels(w io.Writer, models []opencode.Model) error {
 			return err
 		}
 		for _, m := range pModels {
-			if _, err := fmt.Fprintf(w, "  %s\n", m.ID); err != nil {
-				return err
+			if len(m.Variants) > 0 {
+				varNames := make([]string, len(m.Variants))
+				for vi, v := range m.Variants {
+					varNames[vi] = v.Name
+				}
+				if _, err := fmt.Fprintf(w, "  %s  (variants: %s)\n", m.ID, strings.Join(varNames, ", ")); err != nil {
+					return err
+				}
+			} else {
+				if _, err := fmt.Fprintf(w, "  %s\n", m.ID); err != nil {
+					return err
+				}
 			}
 		}
 		if _, err := fmt.Fprintln(w); err != nil { // blank line between sections

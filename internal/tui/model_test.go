@@ -11,9 +11,10 @@ package tui
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -187,7 +188,7 @@ func TestInit_DoesNotPanic(t *testing.T) {
 // command regardless of the current screen.
 func TestUpdate_CtrlC_Quits(t *testing.T) {
 	m := NewModel(fixtureConfig(t), sampleGrouped(), 5)
-	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
+	_, cmd := m.Update(tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl})
 	require.NotNil(t, cmd, "Ctrl+C MUST produce a non-nil command")
 	assert.IsType(t, tea.QuitMsg{}, cmd(), "Ctrl+C MUST produce a tea.QuitMsg")
 }
@@ -201,7 +202,7 @@ func TestUpdate_CtrlC_DirtyOnAgentList_ShowsConfirmation(t *testing.T) {
 	m := NewModel(fixtureConfig(t), sampleGrouped(), 5)
 	m.dirty = true
 
-	newM, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
+	newM, cmd := m.Update(tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl})
 	result := newM.(Model)
 	assert.True(t, result.quitConfirm,
 		"Ctrl+C on AgentList with dirty MUST set quitConfirm, not quit")
@@ -214,7 +215,7 @@ func TestUpdate_CtrlC_DirtyOnAgentList_ShowsConfirmation(t *testing.T) {
 // the core dispatcher 'q' simply quits.
 func TestUpdate_Q_Quits(t *testing.T) {
 	m := NewModel(fixtureConfig(t), sampleGrouped(), 5)
-	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'q'}})
+	_, cmd := m.Update(tea.KeyPressMsg{Text: "q"})
 	require.NotNil(t, cmd, "'q' MUST produce a non-nil command")
 	assert.IsType(t, tea.QuitMsg{}, cmd(), "'q' MUST produce a tea.QuitMsg")
 }
@@ -229,7 +230,7 @@ func TestUpdate_ESC_PopsToPreviousState(t *testing.T) {
 	m.state = ScreenModelSelection
 	m.navigationStack = []appState{ScreenAgentList}
 
-	newM, _ := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	newM, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyEsc})
 	result, ok := newM.(Model)
 	require.True(t, ok, "Update must return the same Model type")
 	assert.Equal(t, ScreenAgentList, result.state,
@@ -240,7 +241,7 @@ func TestUpdate_ESC_PopsToPreviousState(t *testing.T) {
 // screen quits without mutating the root state.
 func TestUpdate_ESC_FromAgentList_StaysAtRoot(t *testing.T) {
 	m := NewModel(fixtureConfig(t), sampleGrouped(), 5)
-	newM, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	newM, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEsc})
 	result := newM.(Model)
 	assert.Equal(t, ScreenAgentList, result.state,
 		"ESC on the root screen must stay on the root screen")
@@ -256,7 +257,7 @@ func TestUpdate_S_NotDirty_StaysOnScreen(t *testing.T) {
 	m := NewModel(fixtureConfig(t), sampleGrouped(), 5)
 	require.False(t, m.dirty, "precondition: model must not be dirty")
 
-	newM, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}})
+	newM, _ := m.Update(tea.KeyPressMsg{Text: "s"})
 	result := newM.(Model)
 	assert.Equal(t, ScreenAgentList, result.state,
 		"'s' with no dirty state must NOT transition to ScreenSaveConfirm")
@@ -271,7 +272,7 @@ func TestUpdate_S_Dirty_TransitionsToSaveConfirm(t *testing.T) {
 	m := NewModel(fixtureConfig(t), sampleGrouped(), 5)
 	m.dirty = true
 
-	newM, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}})
+	newM, _ := m.Update(tea.KeyPressMsg{Text: "s"})
 	result := newM.(Model)
 	assert.Equal(t, ScreenSaveConfirm, result.state,
 		"'s' with dirty state MUST transition to ScreenSaveConfirm")
@@ -284,7 +285,7 @@ func TestUpdate_S_Dirty_TransitionsToSaveConfirm(t *testing.T) {
 // will handle j/k/enter/etc.
 func TestUpdate_OtherKey_NoOp(t *testing.T) {
 	m := NewModel(fixtureConfig(t), sampleGrouped(), 5)
-	newM, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
+	newM, _ := m.Update(tea.KeyPressMsg{Text: "x"})
 	result := newM.(Model)
 	assert.Equal(t, ScreenAgentList, result.state,
 		"unmapped keys must not change state at the core dispatcher")
@@ -319,7 +320,7 @@ func TestView_AllStatesReturnNonEmpty(t *testing.T) {
 	for _, st := range states {
 		m := NewModel(cfg, sampleGrouped(), 5)
 		m.state = st
-		out := m.View()
+		out := m.View().Content
 		assert.NotEmpty(t, out, "state %d MUST render a non-empty placeholder", st)
 	}
 }
@@ -329,7 +330,7 @@ func TestView_AllStatesReturnNonEmpty(t *testing.T) {
 func TestView_NilConfigDoesNotPanic(t *testing.T) {
 	m := NewModel(nil, sampleGrouped(), 5)
 	require.NotPanics(t, func() {
-		out := m.View()
+		out := m.View().Content
 		assert.NotEmpty(t, out)
 	})
 }
@@ -339,11 +340,11 @@ func TestUpdate_DirectPickerEscReturnsAgentList(t *testing.T) {
 	items := selectableItems(m)
 	m.agentCursor = indexOf(items, "code-reviewer")
 
-	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	updated, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = updated.(Model)
 	require.Equal(t, ScreenModelSelection, m.state)
 
-	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	updated, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEsc})
 	m = updated.(Model)
 	assert.Equal(t, ScreenAgentList, m.state)
 }
@@ -353,7 +354,7 @@ func TestUpdate_AgentActivationNeverReachesNonModelEditors(t *testing.T) {
 	items := selectableItems(m)
 	m.agentCursor = indexOf(items, "code-reviewer")
 
-	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	updated, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = updated.(Model)
 	assert.Equal(t, ScreenModelSelection, m.state)
 }
@@ -363,15 +364,15 @@ func TestUpdate_SaveConfirmRepeatedSDoesNotCorruptCancelTarget(t *testing.T) {
 	m.state = ScreenAgentList
 	m.dirty = true
 
-	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}})
+	updated, _ := m.Update(tea.KeyPressMsg{Text: "s"})
 	m = updated.(Model)
 	require.Equal(t, ScreenSaveConfirm, m.state)
 
-	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}})
+	updated, _ = m.Update(tea.KeyPressMsg{Text: "s"})
 	m = updated.(Model)
 	require.Equal(t, ScreenSaveConfirm, m.state)
 
-	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	updated, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEsc})
 	m = updated.(Model)
 	assert.Equal(t, ScreenAgentList, m.state)
 }
@@ -380,7 +381,7 @@ func TestModelPicker_PrintableQsjkReachFilterInput(t *testing.T) {
 	m := newModelSelectModel(t, "global", "")
 
 	for _, r := range []rune{'q', 's', 'j', 'k'} {
-		updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+		updated, _ := m.Update(tea.KeyPressMsg{Text: string(r)})
 		m = updated.(Model)
 	}
 
@@ -394,13 +395,13 @@ func TestAgentList_CursorRestoredAfterModelPicker(t *testing.T) {
 	wantCursor := indexOf(items, "code-reviewer")
 	m.agentCursor = wantCursor
 
-	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	updated, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = updated.(Model)
-	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	updated, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = updated.(Model)
-	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	updated, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEsc})
 	m = updated.(Model)
-	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	updated, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEsc})
 	m = updated.(Model)
 
 	assert.Equal(t, ScreenAgentList, m.state)
@@ -413,16 +414,16 @@ func TestModelPicker_CursorIndependentFromAgentListCursor(t *testing.T) {
 	wantAgentCursor := indexOf(items, "code-reviewer")
 	m.agentCursor = wantAgentCursor
 
-	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	updated, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = updated.(Model)
 	require.Equal(t, ScreenModelSelection, m.state)
 	assert.Equal(t, 0, m.modelCursor, "model picker starts at its own first result")
 
-	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyDown})
+	updated, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyDown})
 	m = updated.(Model)
 	assert.Equal(t, 1, m.modelCursor, "model picker cursor moves independently")
 
-	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	updated, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEsc})
 	m = updated.(Model)
 	assert.Equal(t, wantAgentCursor, m.agentCursor)
 }
@@ -497,6 +498,32 @@ func TestPopScreen_ClearsBulkListSentinel(t *testing.T) {
 		"popScreen from bulk-list MUST clear fieldEditing")
 	assert.Nil(t, m.bulkTargets,
 		"popScreen from bulk-list MUST clear bulkTargets")
+}
+
+func TestPopScreen_FromVariantSelection_PreservesBulkState(t *testing.T) {
+	m := NewModel(fixtureConfig(t), sampleGrouped(), 5)
+	m.state = ScreenVariantSelection
+	m.fieldEditing = fieldEditingBulkList
+	m.bulkTargets = []string{"agent-a", "agent-b"}
+	m.pendingSelectedModel = opencode.Model{FullName: "test/model"}
+	m.availableVariants = []opencode.VariantDescriptor{{Name: "var1"}}
+	m.variantCursor = 1
+	m.navigationStack = []appState{ScreenAgentList, ScreenModelSelection}
+
+	m.popScreen()
+
+	assert.Equal(t, ScreenModelSelection, m.state, "popScreen from variant selection must return to model selection")
+	assert.Equal(t, fieldEditingBulkList, m.fieldEditing, "popScreen from variant selection must preserve bulk-list fieldEditing")
+	assert.Equal(t, []string{"agent-a", "agent-b"}, m.bulkTargets, "popScreen from variant selection must preserve bulkTargets")
+	assert.Empty(t, m.pendingSelectedModel.FullName, "pendingSelectedModel must be cleared")
+	assert.Nil(t, m.availableVariants, "availableVariants must be cleared")
+	assert.Zero(t, m.variantCursor, "variantCursor must be reset to 0")
+
+	// Now popping from model selection clears bulk state
+	m.popScreen()
+	assert.Equal(t, ScreenAgentList, m.state)
+	assert.Equal(t, "", m.fieldEditing)
+	assert.Nil(t, m.bulkTargets)
 }
 
 // TestPopScreen_PreservesGlobalSentinel is a regression guard: the "global"
@@ -635,7 +662,7 @@ func TestTUI_MarkdownBackedAgentIsEditable(t *testing.T) {
 		"md-backed agent 'editable' must be selectable in the list")
 	m.agentCursor = cursor
 
-	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	updated, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	result := updated.(Model)
 	assert.Equal(t, ScreenModelSelection, result.state,
 		"ENTER on an md-backed agent MUST open model selection")
@@ -648,7 +675,7 @@ func TestTUI_MarkdownBackedAgentIsEditable(t *testing.T) {
 	cursor2 := indexOf(items2, "code-reviewer")
 	require.GreaterOrEqual(t, cursor2, 0)
 	m2.agentCursor = cursor2
-	updated2, _ := m2.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	updated2, _ := m2.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	result2 := updated2.(Model)
 	assert.Equal(t, ScreenModelSelection, result2.state,
 		"ENTER on a JSON-backed agent must still open model selection")
@@ -787,4 +814,73 @@ func TestTUI_EditingMarkdownAgentPersistsJSONOnly(t *testing.T) {
 		"merged mode MUST still come from md (per-field merge)")
 	assert.Equal(t, "Body.", merged.Prompt,
 		"merged prompt MUST still come from md body (per-field merge)")
+}
+
+// ---------------------------------------------------------------------------
+// Lifecycle & Negative Assertions (REQ-TUI-PRO-001, REQ-TUI-PRO-004)
+// ---------------------------------------------------------------------------
+
+func TestModel_InitReturnsNil(t *testing.T) {
+	m := NewModel(fixtureConfig(t), sampleGrouped(), 5)
+	cmd := m.Init()
+	assert.Nil(t, cmd, "Init MUST return nil (no startup async work, no spinners, no periodic commands)")
+}
+
+func TestModel_NonFilterScreensDoNotSchedulePeriodicCommands(t *testing.T) {
+	cfg := fixtureConfig(t)
+	states := []struct {
+		name  string
+		state appState
+	}{
+		{"AgentList", ScreenAgentList},
+		{"SaveConfirm", ScreenSaveConfirm},
+		{"AgentMultiSelect", ScreenAgentMultiSelect},
+	}
+
+	for _, s := range states {
+		t.Run(s.name, func(t *testing.T) {
+			m := NewModel(cfg, sampleGrouped(), 5)
+			m.state = s.state
+			if s.state == ScreenAgentMultiSelect {
+				initAgentMultiSelectScreen(&m)
+			}
+			_, cmd := m.Update(struct{}{})
+			assert.Nil(t, cmd, "non-filter screen %s MUST NOT schedule commands on non-key messages", s.name)
+		})
+	}
+}
+
+func TestModel_Negative_NoSpinnerOnAnyScreen(t *testing.T) {
+	cfg := fixtureConfig(t)
+	states := []struct {
+		name  string
+		state appState
+	}{
+		{"AgentList", ScreenAgentList},
+		{"ModelSelection", ScreenModelSelection},
+		{"SaveConfirm", ScreenSaveConfirm},
+		{"AgentMultiSelect", ScreenAgentMultiSelect},
+	}
+
+	spinnerRunes := []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
+
+	for _, s := range states {
+		t.Run(s.name, func(t *testing.T) {
+			m := NewModel(cfg, richGrouped(), 5)
+			m.state = s.state
+			switch s.state {
+			case ScreenModelSelection:
+				initModelSelectionScreen(&m)
+			case ScreenAgentMultiSelect:
+				initAgentMultiSelectScreen(&m)
+			}
+			out := m.View().Content
+			for _, r := range spinnerRunes {
+				assert.NotContains(t, out, r, "Screen %s MUST NOT render spinner rune %q", s.name, r)
+			}
+			lower := strings.ToLower(out)
+			assert.NotContains(t, lower, "spinner")
+			assert.NotContains(t, lower, "loading...")
+		})
+	}
 }

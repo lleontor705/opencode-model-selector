@@ -32,9 +32,9 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/charmbracelet/bubbles/textinput"
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/bubbles/v2/textinput"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 
 	"github.com/lleontor705/opencode-model-selector/internal/config"
 	"github.com/lleontor705/opencode-model-selector/internal/opencode"
@@ -131,8 +131,8 @@ func syncModelViewport(m *Model) {
 	if m.width <= 0 || m.height <= 0 {
 		return
 	}
-	m.modelViewport.Width = max(1, m.width)
-	m.modelViewport.Height = modelSelectionViewportHeight(*m)
+	m.modelViewport.SetWidth(max(1, m.width))
+	m.modelViewport.SetHeight(modelSelectionViewportHeight(*m))
 	content, selectedStart, selectedEnd := renderModelSelectionContent(*m)
 	m.modelViewport.SetContent(content)
 	ensureViewportRange(&m.modelViewport, selectedStart, selectedEnd)
@@ -234,43 +234,47 @@ func currentModelFullName(m Model) string {
 	return ""
 }
 
-// updateModelSelection handles key presses on the model selection screen.
+// updateModelSelection handles key presses and widget messages on the model selection screen.
 //
 // Keys:
-//   - typing:   updates filterInput, applies filter, resets cursor to 0
-//   - Backspace: deletes from filterInput, applies filter
+//   - typing:   updates filterInput, applies filter, resets cursor to 0, propagates blink cmd
+//   - Backspace: deletes from filterInput, applies filter, propagates blink cmd
 //   - Down / Ctrl+N: cursor down (stops at last filtered model)
 //   - Up / Ctrl+P:   cursor up (stops at 0)
 //   - ENTER:         selects model at cursor, persists to config, pops origin
 //   - ESC:           cancels and pops the immutable origin without changes
+//   - non-key msgs:  passed to filterInput.Update to process cursor blink ticks
 //
-// Spec: REQ-TUI-005 — interaction.
+// Spec: REQ-TUI-005 — interaction, REQ-TUI-PRO-004 — blink command propagation.
 func updateModelSelection(m Model, msg tea.Msg) (Model, tea.Cmd) {
-	keyMsg, ok := msg.(tea.KeyMsg)
+	keyMsg, ok := msg.(tea.KeyPressMsg)
 	if !ok {
-		return m, nil
+		var cmd tea.Cmd
+		m.filterInput, cmd = m.filterInput.Update(msg)
+		return m, cmd
 	}
 
 	switch {
 	// --- ESC: cancel, return to immutable origin ---
-	case keyMsg.Type == tea.KeyEsc || keyMsg.Type == tea.KeyEscape:
+	case keyMsg.Code == tea.KeyEsc:
 		m.popScreen()
 		return m, nil
 
 	// --- ENTER: select model at cursor ---
-	case keyMsg.Type == tea.KeyEnter:
+	case keyMsg.Code == tea.KeyEnter:
 		return selectModelAtCursor(m), nil
 
 	// --- Backspace: delete from filter, re-apply ---
-	case keyMsg.Type == tea.KeyBackspace:
-		m.filterInput, _ = m.filterInput.Update(keyMsg)
+	case keyMsg.Code == tea.KeyBackspace:
+		var cmd tea.Cmd
+		m.filterInput, cmd = m.filterInput.Update(keyMsg)
 		m.modelCursor = 0
 		m = applyFilter(m)
 		syncModelViewport(&m)
-		return m, nil
+		return m, cmd
 
 	// --- Cursor down ---
-	case keyMsg.Type == tea.KeyDown || keyMsg.Type == tea.KeyCtrlN:
+	case keyMsg.Code == tea.KeyDown || (keyMsg.Code == 'n' && keyMsg.Mod.Contains(tea.ModCtrl)):
 		if len(m.filteredModels) > 0 && m.modelCursor < len(m.filteredModels)-1 {
 			m.modelCursor++
 		}
@@ -278,7 +282,7 @@ func updateModelSelection(m Model, msg tea.Msg) (Model, tea.Cmd) {
 		return m, nil
 
 	// --- Cursor up ---
-	case keyMsg.Type == tea.KeyUp || keyMsg.Type == tea.KeyCtrlP:
+	case keyMsg.Code == tea.KeyUp || (keyMsg.Code == 'p' && keyMsg.Mod.Contains(tea.ModCtrl)):
 		if m.modelCursor > 0 {
 			m.modelCursor--
 		}
@@ -286,16 +290,19 @@ func updateModelSelection(m Model, msg tea.Msg) (Model, tea.Cmd) {
 		return m, nil
 
 	// --- Typing: update filter input, reset cursor ---
-	case keyMsg.Type == tea.KeyRunes && len(keyMsg.Runes) > 0:
-		m.filterInput, _ = m.filterInput.Update(keyMsg)
+	case keyMsg.Text != "":
+		var cmd tea.Cmd
+		m.filterInput, cmd = m.filterInput.Update(keyMsg)
 		m.modelCursor = 0
 		m = applyFilter(m)
 		syncModelViewport(&m)
-		return m, nil
+		return m, cmd
 
-	// --- Unmapped key: no-op ---
+	// --- Unmapped key: pass to filterInput in case widget handles it ---
 	default:
-		return m, nil
+		var cmd tea.Cmd
+		m.filterInput, cmd = m.filterInput.Update(keyMsg)
+		return m, cmd
 	}
 }
 
@@ -316,11 +323,23 @@ func selectModelAtCursor(m Model) Model {
 
 	switch m.fieldEditing {
 	case "global":
+		if len(selected.Variants) > 0 {
+			m.pendingSelectedModel = selected
+			m.pushScreen(ScreenVariantSelection)
+			initVariantSelectionScreen(&m, selected)
+			return m
+		}
 		oldVal, _ := m.config.GetGlobalModel()
 		m.config.SetGlobalModel(selected.FullName)
 		m.RecordModelChange("global", oldVal, selected.FullName)
 
 	case fieldEditingBulkAll:
+		if len(selected.Variants) > 0 {
+			m.pendingSelectedModel = selected
+			m.pushScreen(ScreenVariantSelection)
+			initVariantSelectionScreen(&m, selected)
+			return m
+		}
 		for _, name := range selectableCatalogNames(m) {
 			oldVal, _, _ := m.config.ResolveEffectiveModel(name)
 			if oldVal == selected.FullName {
@@ -334,6 +353,12 @@ func selectModelAtCursor(m Model) Model {
 		m.bulkTargets = nil
 
 	case fieldEditingBulkList:
+		if len(selected.Variants) > 0 {
+			m.pendingSelectedModel = selected
+			m.pushScreen(ScreenVariantSelection)
+			initVariantSelectionScreen(&m, selected)
+			return m
+		}
 		seen := make(map[string]struct{}, len(m.bulkTargets))
 		for _, name := range m.bulkTargets {
 			if _, duplicate := seen[name]; duplicate {
@@ -355,6 +380,13 @@ func selectModelAtCursor(m Model) Model {
 		m.bulkTargets = nil
 
 	default:
+		if len(selected.Variants) > 0 {
+			m.pendingSelectedModel = selected
+			m.pushScreen(ScreenVariantSelection)
+			initVariantSelectionScreen(&m, selected)
+			return m
+		}
+
 		// Capture the previous MERGED model so the save-confirm diff reads
 		// "<md-model> -> <new>" instead of "(none) -> <new>" when overriding
 		// a markdown-backed agent. The write remains a JSON model override.
@@ -374,13 +406,19 @@ func selectModelAtCursor(m Model) Model {
 }
 
 // initModelSelectionScreen resets the filter input, cursor, and filteredModels
-// when entering the Model Selection screen.
-func initModelSelectionScreen(m *Model) {
+// when entering the Model Selection screen. It focuses the filter input and
+// returns the cursor blink command.
+func initModelSelectionScreen(m *Model) tea.Cmd {
 	m.filterInput = textinput.New()
 	m.filterInput.Placeholder = "Type to filter..."
-	m.filterInput.Focus()
+	cmd := m.filterInput.Focus()
+	// Bubbles v2 truncates the placeholder to Width()+1 runes, so a zero
+	// width would hide it entirely. Seed the width with the placeholder
+	// length; the WindowSizeMsg handler re-clamps it to the terminal.
+	m.filterInput.SetWidth(lipgloss.Width(m.filterInput.Placeholder))
 	m.modelCursor = 0
 	m.filteredModels = append([]opencode.Model(nil), m.flatModels...)
 	sortSelectableModels(m.filteredModels)
 	syncModelViewport(m)
+	return cmd
 }

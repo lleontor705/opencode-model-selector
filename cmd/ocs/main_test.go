@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -361,6 +361,32 @@ func TestFormatModels_ProvidersSortedAlphabetically(t *testing.T) {
 		assert.Less(t, indices[i-1], indices[i],
 			"provider %q must appear before %q", providers[i-1], providers[i])
 	}
+}
+
+func TestFormatModels_WithVariants(t *testing.T) {
+	models := []opencode.Model{
+		{
+			Provider: "openai",
+			ID:       "gpt-5",
+			FullName: "openai/gpt-5",
+			Variants: []opencode.VariantDescriptor{
+				{Name: "high"},
+				{Name: "low"},
+			},
+		},
+		{
+			Provider: "anthropic",
+			ID:       "claude",
+			FullName: "anthropic/claude",
+		},
+	}
+	var buf bytes.Buffer
+	err := formatModels(&buf, models)
+	require.NoError(t, err)
+
+	output := buf.String()
+	assert.Contains(t, output, "gpt-5  (variants: high, low)")
+	assert.Contains(t, output, "claude\n")
 }
 
 // ---------------------------------------------------------------------------

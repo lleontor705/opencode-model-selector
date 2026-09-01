@@ -167,3 +167,90 @@ func TestMerge_DisableFromJSON(t *testing.T) {
 	merged = MergeAgents(mdLayer("a", "", nil), nil, nil)
 	assert.False(t, merged["a"].Disabled(), "md-only agent defaults to not disabled")
 }
+
+// ---------------------------------------------------------------------------
+// Model / Variant / Options independent merge and resolution (mem-001)
+// ---------------------------------------------------------------------------
+
+func TestMerge_ModelVariantIndependentPrecedence(t *testing.T) {
+	// Scenario 1: Project MD has model, Global MD has variant, no JSON
+	global1 := mdLayer("agent1", "", asJSONObj("variant", "global-high", "model", "global-model"))
+	project1 := mdLayer("agent1", "", asJSONObj("model", "project-model")) // no variant
+
+	merged1 := MergeAgents(global1, project1, nil)
+	m1 := merged1["agent1"]
+	require.NotNil(t, m1)
+	assert.Equal(t, "project-model", m1.Fields["model"], "project model must override global model")
+	assert.Equal(t, "global-high", m1.Fields["variant"], "global variant must fill absent project variant")
+
+	// Scenario 2: Inherited MD model, inline JSON sets variant only
+	json2 := map[string]interface{}{
+		"agent1": asJSONObj("variant", "json-medium"),
+	}
+	merged2 := MergeAgents(global1, project1, json2)
+	m2 := merged2["agent1"]
+	require.NotNil(t, m2)
+	assert.Equal(t, "project-model", m2.Fields["model"], "inherited project model remains effective")
+	assert.Equal(t, "json-medium", m2.Fields["variant"], "inline JSON variant wins over MD variant")
+
+	// Scenario 3: Global MD has variant, inline JSON sets model only
+	json3 := map[string]interface{}{
+		"agent1": asJSONObj("model", "json-model"),
+	}
+	merged3 := MergeAgents(global1, nil, json3)
+	m3 := merged3["agent1"]
+	require.NotNil(t, m3)
+	assert.Equal(t, "json-model", m3.Fields["model"], "inline JSON model wins")
+	assert.Equal(t, "global-high", m3.Fields["variant"], "global MD variant remains effective")
+
+	// Scenario 4: Options layer merge
+	globalOpt := mdLayer("agent2", "", asJSONObj("options", map[string]interface{}{"effort": "low", "temp": 0.5}))
+	projectOpt := mdLayer("agent2", "", asJSONObj("options", map[string]interface{}{"effort": "medium"}))
+	jsonOpt := map[string]interface{}{
+		"agent2": asJSONObj("options", map[string]interface{}{"effort": "high"}),
+	}
+	mergedOpt := MergeAgents(globalOpt, projectOpt, jsonOpt)
+	mOpt := mergedOpt["agent2"]
+	require.NotNil(t, mOpt)
+	assert.Equal(t, map[string]interface{}{"effort": "high"}, mOpt.Fields["options"],
+		"inline JSON options override lower layers")
+}
+
+func TestMerge_ModelVariantUnknownKeysPreserved(t *testing.T) {
+	global := mdLayer("custom", "", asJSONObj("custom_md_field", "global_val", "variant", "low"))
+	project := mdLayer("custom", "", asJSONObj("custom_proj_field", "proj_val", "model", "pm"))
+	jsonAgents := map[string]interface{}{
+		"custom": asJSONObj("custom_json_field", 12345),
+	}
+
+	merged := MergeAgents(global, project, jsonAgents)
+	m := merged["custom"]
+	require.NotNil(t, m)
+
+	assert.Equal(t, "pm", m.Fields["model"])
+	assert.Equal(t, "low", m.Fields["variant"])
+	assert.Equal(t, "global_val", m.Fields["custom_md_field"])
+	assert.Equal(t, "proj_val", m.Fields["custom_proj_field"])
+	assert.Equal(t, 12345, m.Fields["custom_json_field"])
+}
+
+func TestResolveModel_IndependentOfVariant(t *testing.T) {
+	globalMD := map[string]MDAgent{
+		"worker": {Name: "worker", Raw: map[string]interface{}{"model": "global/model", "variant": "high"}},
+	}
+	projectMD := map[string]MDAgent{
+		"worker": {Name: "worker", Raw: map[string]interface{}{"variant": "medium"}},
+	}
+	inlineJSON := map[string]interface{}{
+		"worker": map[string]interface{}{"variant": "low"},
+	}
+
+	// ResolveModel returns clean model ID without variant pollution
+	model, prov, ok := ResolveModel("worker", globalMD, projectMD, inlineJSON, "fallback/model")
+	require.True(t, ok)
+	assert.Equal(t, "global/model", model)
+	assert.Equal(t, ModelProvenanceGlobalMarkdown, prov)
+	assert.NotContains(t, model, ":high")
+	assert.NotContains(t, model, ":medium")
+	assert.NotContains(t, model, ":low")
+}

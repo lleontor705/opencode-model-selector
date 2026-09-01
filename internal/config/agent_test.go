@@ -674,3 +674,135 @@ func TestModelFacade_SavePreservesUnrelatedJSONAndMarkdownBytes(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, mdBytes, gotMD, "model facade must never rewrite markdown")
 }
+
+// ---------------------------------------------------------------------------
+// Independent Model / Variant / Options Selection Contract (mem-001)
+// ---------------------------------------------------------------------------
+
+func TestModelVariant_IndependentAgentFieldAccess(t *testing.T) {
+	cfg, err := LoadConfig(fixturePath(t, "model_variant.json"))
+	require.NoError(t, err)
+
+	// Planner has model, variant, and options
+	modelVal, ok := cfg.GetAgentField("planner", "model")
+	require.True(t, ok)
+	assert.Equal(t, "openai/gpt-4o", modelVal)
+
+	varVal, ok := cfg.GetAgentField("planner", "variant")
+	require.True(t, ok)
+	assert.Equal(t, "high", varVal)
+
+	optVal, ok := cfg.GetAgentField("planner", "options")
+	require.True(t, ok)
+	optMap, ok := optVal.(map[string]interface{})
+	require.True(t, ok)
+	assert.Equal(t, "high", optMap["effort"])
+
+	// Reviewer has model only (no variant, no options)
+	modelVal, ok = cfg.GetAgentField("reviewer", "model")
+	require.True(t, ok)
+	assert.Equal(t, "anthropic/claude-sonnet-4-20250514", modelVal)
+	_, ok = cfg.GetAgentField("reviewer", "variant")
+	assert.False(t, ok, "reviewer must have no variant field")
+	_, ok = cfg.GetAgentField("reviewer", "options")
+	assert.False(t, ok, "reviewer must have no options field")
+
+	// Explorer has variant only (inherits global model)
+	_, ok = cfg.GetAgentField("explorer", "model")
+	assert.False(t, ok, "explorer has no inline model field")
+	varVal, ok = cfg.GetAgentField("explorer", "variant")
+	require.True(t, ok)
+	assert.Equal(t, "low", varVal)
+
+	// General has options only
+	_, ok = cfg.GetAgentField("general", "model")
+	assert.False(t, ok)
+	_, ok = cfg.GetAgentField("general", "variant")
+	assert.False(t, ok)
+	optVal, ok = cfg.GetAgentField("general", "options")
+	require.True(t, ok)
+	optMap, ok = optVal.(map[string]interface{})
+	require.True(t, ok)
+	assert.Equal(t, float64(3), optMap["search_depth"])
+}
+
+func TestModelVariant_IndependentFieldMutation(t *testing.T) {
+	cfg := &Config{data: map[string]interface{}{
+		"agent": map[string]interface{}{
+			"worker": map[string]interface{}{
+				"mode":    "subagent",
+				"model":   "openai/gpt-4o",
+				"variant": "high",
+				"options": map[string]interface{}{"effort": "high"},
+			},
+		},
+	}}
+
+	// 1. Mutating variant does not touch model or options
+	require.NoError(t, cfg.SetAgentField("worker", "variant", "medium"))
+	modelVal, _ := cfg.GetAgentField("worker", "model")
+	varVal, _ := cfg.GetAgentField("worker", "variant")
+	optVal, _ := cfg.GetAgentField("worker", "options")
+	assert.Equal(t, "openai/gpt-4o", modelVal, "model must remain unchanged")
+	assert.Equal(t, "medium", varVal, "variant must be updated")
+	assert.Equal(t, map[string]interface{}{"effort": "high"}, optVal, "options must remain unchanged")
+
+	// 2. Mutating model does not touch variant or options
+	require.NoError(t, cfg.SetAgentField("worker", "model", "anthropic/claude-sonnet-4-20250514"))
+	modelVal, _ = cfg.GetAgentField("worker", "model")
+	varVal, _ = cfg.GetAgentField("worker", "variant")
+	assert.Equal(t, "anthropic/claude-sonnet-4-20250514", modelVal, "model must be updated")
+	assert.Equal(t, "medium", varVal, "variant must remain unchanged")
+
+	// 3. Ensure no model suffix conflation (never string-concatenate variant into model)
+	assert.NotContains(t, modelVal.(string), ":medium", "model must not conflate variant as suffix")
+	assert.NotContains(t, modelVal.(string), ":high", "model must not conflate variant as suffix")
+
+	// 4. Ensure no invented top-level global reasoningEffort key
+	assert.NotContains(t, cfg.data, "reasoningEffort", "no global reasoningEffort key")
+}
+
+func TestModelVariant_DisabledAgentProtection(t *testing.T) {
+	cfg, err := LoadConfig(fixturePath(t, "model_variant.json"))
+	require.NoError(t, err)
+
+	// Disabled agent must reject field changes for model, variant, and options
+	assert.True(t, cfg.IsAgentDisabled("build"))
+	require.Error(t, cfg.SetAgentField("build", "model", "openai/gpt-5"))
+	require.Error(t, cfg.SetAgentField("build", "variant", "turbo"))
+	require.Error(t, cfg.SetAgentField("build", "options", map[string]interface{}{"key": "val"}))
+}
+
+func TestModelVariant_ExplicitClearVsAbsent(t *testing.T) {
+	cfg := &Config{data: map[string]interface{}{
+		"agent": map[string]interface{}{
+			"agent-absent": map[string]interface{}{"mode": "subagent"},
+			"agent-cleared": map[string]interface{}{
+				"mode":    "subagent",
+				"model":   "",
+				"variant": "",
+			},
+		},
+	}}
+
+	// Absent field: GetAgentField returns false
+	_, ok := cfg.GetAgentField("agent-absent", "model")
+	assert.False(t, ok, "absent model returns false")
+	_, ok = cfg.GetAgentField("agent-absent", "variant")
+	assert.False(t, ok, "absent variant returns false")
+
+	// Cleared (explicit empty string) field: GetAgentField returns true with ""
+	v, ok := cfg.GetAgentField("agent-cleared", "model")
+	assert.True(t, ok, "explicit empty string key exists in map")
+	assert.Equal(t, "", v)
+
+	v, ok = cfg.GetAgentField("agent-cleared", "variant")
+	assert.True(t, ok, "explicit empty string key exists in map")
+	assert.Equal(t, "", v)
+
+	// GetAgentModelOverride filters out empty strings
+	_, ok = cfg.GetAgentModelOverride("agent-absent")
+	assert.False(t, ok)
+	_, ok = cfg.GetAgentModelOverride("agent-cleared")
+	assert.False(t, ok, "empty string model override is treated as non-overridden")
+}

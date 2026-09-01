@@ -11,6 +11,66 @@ type ModelResolver interface {
 	ResolveEffectiveModel(string) (string, config.ModelProvenance, bool)
 }
 
+// VariantResolver is the variant configuration boundary used by catalog
+// composition to retrieve variant descriptors for a model.
+type VariantResolver interface {
+	ResolveModelVariants(provider, modelID string) []opencode.VariantDescriptor
+}
+
+// ConfigDataProvider is the configuration boundary for sources exposing raw
+// configuration data maps (such as *config.Config).
+type ConfigDataProvider interface {
+	Data() map[string]interface{}
+}
+
+// ModelVariantResolver combines model resolution for agents and variant
+// resolution for models.
+type ModelVariantResolver interface {
+	ModelResolver
+	VariantResolver
+}
+
+// ComposeModels joins discovered models with configured variant descriptors
+// from a resolver or raw configuration source. Full model identities are
+// preserved, variants are sorted deterministically, and missing or malformed
+// maps yield no synthetic entries.
+func ComposeModels(models []opencode.Model, resolver any) []opencode.Model {
+	if len(models) == 0 {
+		return []opencode.Model{}
+	}
+	if resolver == nil {
+		return opencode.JoinModelVariants(models, nil)
+	}
+	if vr, ok := resolver.(VariantResolver); ok {
+		result := make([]opencode.Model, len(models))
+		for i, m := range models {
+			result[i] = opencode.Model{
+				Provider: m.Provider,
+				ID:       m.ID,
+				FullName: m.FullName,
+			}
+			variants := vr.ResolveModelVariants(m.Provider, m.ID)
+			if len(variants) > 0 {
+				opencode.SortVariants(variants)
+				result[i].Variants = variants
+			}
+		}
+		return result
+	}
+	if cdp, ok := resolver.(ConfigDataProvider); ok {
+		return opencode.JoinModelVariants(models, cdp.Data())
+	}
+	if data, ok := resolver.(map[string]interface{}); ok {
+		return opencode.JoinModelVariants(models, data)
+	}
+	return opencode.JoinModelVariants(models, nil)
+}
+
+// ComposeModelVariants is an alias for ComposeModels.
+func ComposeModelVariants(models []opencode.Model, resolver any) []opencode.Model {
+	return ComposeModels(models, resolver)
+}
+
 // ComposeRuntimeAgents combines authoritative runtime identities with their
 // effective configured models, then applies the catalog classification rules.
 // Configuration cannot add identities or override runtime role, native, or

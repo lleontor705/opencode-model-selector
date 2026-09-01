@@ -18,8 +18,9 @@ import (
 	"strings"
 	"testing"
 
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -93,7 +94,7 @@ func countBackupsInDir(t *testing.T, dir string) int {
 func TestUpdateSaveConfirm_NotDirty_Enter_ReturnsImmediately(t *testing.T) {
 	m := newSaveConfirmModel(t, false)
 
-	newM, _ := updateSaveConfirm(m, tea.KeyMsg{Type: tea.KeyEnter})
+	newM, _ := updateSaveConfirm(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	assert.Equal(t, ScreenAgentList, newM.state,
 		"ENTER with no changes MUST return to previousState immediately")
 	assert.False(t, newM.dirty, "dirty MUST remain false")
@@ -110,7 +111,7 @@ func TestUpdateSaveConfirm_NotDirty_NoWriteNoBackup(t *testing.T) {
 	m.navigationStack = []appState{ScreenAgentList}
 	m.dirty = false
 
-	newM, _ := updateSaveConfirm(m, tea.KeyMsg{Type: tea.KeyEnter})
+	newM, _ := updateSaveConfirm(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	after := countBackupsInDir(t, dir)
 
 	assert.Equal(t, before, after,
@@ -125,7 +126,7 @@ func TestUpdateSaveConfirm_NotDirty_NoWriteNoBackup(t *testing.T) {
 func TestUpdateSaveConfirm_Dirty_Enter_SavesAndReturns(t *testing.T) {
 	m := writableSaveConfirmModel(t, 5)
 
-	newM, _ := updateSaveConfirm(m, tea.KeyMsg{Type: tea.KeyEnter})
+	newM, _ := updateSaveConfirm(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	assert.Equal(t, ScreenAgentList, newM.state,
 		"after successful save MUST return to ScreenAgentList")
 	assert.False(t, newM.dirty, "dirty MUST be false after successful save")
@@ -136,7 +137,7 @@ func TestUpdateSaveConfirm_Dirty_Enter_CreatesBackup(t *testing.T) {
 	m := writableSaveConfirmModel(t, 5)
 	dir := filepath.Dir(m.config.Path())
 
-	newM, _ := updateSaveConfirm(m, tea.KeyMsg{Type: tea.KeyEnter})
+	newM, _ := updateSaveConfirm(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	backups := countBackupsInDir(t, dir)
 	assert.GreaterOrEqual(t, backups, 1,
 		"at least one backup MUST be created when backupCount > 0")
@@ -147,7 +148,7 @@ func TestUpdateSaveConfirm_Dirty_Enter_CreatesBackup(t *testing.T) {
 func TestUpdateSaveConfirm_Dirty_Enter_PersistsConfigChange(t *testing.T) {
 	m := writableSaveConfirmModel(t, 5)
 
-	updateSaveConfirm(m, tea.KeyMsg{Type: tea.KeyEnter})
+	updateSaveConfirm(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 
 	// Reload from disk to verify the change was persisted.
 	savedCfg, err := config.LoadConfig(m.config.Path())
@@ -164,7 +165,7 @@ func TestUpdateSaveConfirm_Dirty_Enter_PersistsConfigChange(t *testing.T) {
 func TestUpdateSaveConfirm_Dirty_Esc_ReturnsWithoutSaving(t *testing.T) {
 	m := newSaveConfirmModel(t, true)
 
-	newM, _ := updateSaveConfirm(m, tea.KeyMsg{Type: tea.KeyEsc})
+	newM, _ := updateSaveConfirm(m, tea.KeyPressMsg{Code: tea.KeyEsc})
 	assert.Equal(t, ScreenAgentList, newM.state,
 		"ESC MUST return to previousState")
 	assert.True(t, newM.dirty, "dirty MUST remain true when canceling save")
@@ -173,7 +174,7 @@ func TestUpdateSaveConfirm_Dirty_Esc_ReturnsWithoutSaving(t *testing.T) {
 func TestUpdateSaveConfirm_Dirty_N_ReturnsWithoutSaving(t *testing.T) {
 	m := newSaveConfirmModel(t, true)
 
-	newM, _ := updateSaveConfirm(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
+	newM, _ := updateSaveConfirm(m, tea.KeyPressMsg{Text: "n"})
 	assert.Equal(t, ScreenAgentList, newM.state)
 	assert.True(t, newM.dirty, "'n' MUST cancel without saving")
 }
@@ -185,7 +186,7 @@ func TestUpdateSaveConfirm_Dirty_N_ReturnsWithoutSaving(t *testing.T) {
 func TestUpdateSaveConfirm_Y_ConfirmsSave(t *testing.T) {
 	m := writableSaveConfirmModel(t, 5)
 
-	newM, _ := updateSaveConfirm(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
+	newM, _ := updateSaveConfirm(m, tea.KeyPressMsg{Text: "y"})
 	assert.Equal(t, ScreenAgentList, newM.state,
 		"'y' MUST trigger the save flow")
 	assert.False(t, newM.dirty)
@@ -200,7 +201,7 @@ func TestUpdateSaveConfirm_BackupCountZero_SkipsBackupStillSaves(t *testing.T) {
 	dir := filepath.Dir(m.config.Path())
 	before := countBackupsInDir(t, dir)
 
-	newM, _ := updateSaveConfirm(m, tea.KeyMsg{Type: tea.KeyEnter})
+	newM, _ := updateSaveConfirm(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	after := countBackupsInDir(t, dir)
 
 	assert.Equal(t, before, after,
@@ -232,7 +233,7 @@ func TestUpdateSaveConfirm_SaveFails_ShowsErrorStaysDirty(t *testing.T) {
 	require.NoError(t, m.config.SetAgentModelOverride("code-reviewer", "opencode-go/glm-5.2"))
 	m.RecordModelChange("code-reviewer", "old/model", "opencode-go/glm-5.2")
 
-	newM, _ := updateSaveConfirm(m, tea.KeyMsg{Type: tea.KeyEnter})
+	newM, _ := updateSaveConfirm(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	assert.Equal(t, ScreenSaveConfirm, newM.state,
 		"on save failure MUST stay on the save confirm screen")
 	assert.True(t, newM.dirty, "dirty MUST remain true on save failure")
@@ -249,7 +250,7 @@ func TestUpdateSaveConfirm_BackupFails_ShowsErrorStaysDirty(t *testing.T) {
 	m.navigationStack = []appState{ScreenAgentList}
 	m.dirty = true
 
-	newM, _ := updateSaveConfirm(m, tea.KeyMsg{Type: tea.KeyEnter})
+	newM, _ := updateSaveConfirm(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	assert.Equal(t, ScreenSaveConfirm, newM.state,
 		"on backup failure MUST stay on the save confirm screen")
 	assert.True(t, newM.dirty, "dirty MUST remain true on backup failure")
@@ -311,7 +312,7 @@ func TestViewSaveConfirm_NilConfigDoesNotPanic(t *testing.T) {
 
 func TestUpdate_DispatchesToSaveConfirm(t *testing.T) {
 	m := newSaveConfirmModel(t, false)
-	newM, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	newM, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	result, ok := newM.(Model)
 	require.True(t, ok)
 	assert.Equal(t, ScreenAgentList, result.state,
@@ -320,7 +321,7 @@ func TestUpdate_DispatchesToSaveConfirm(t *testing.T) {
 
 func TestView_DispatchesToSaveConfirm(t *testing.T) {
 	m := newSaveConfirmModel(t, true)
-	out := m.View()
+	out := m.View().Content
 	assert.Contains(t, out, "Save",
 		"global View() MUST dispatch ScreenSaveConfirm to viewSaveConfirm")
 }
@@ -409,7 +410,7 @@ func TestPerformSave_ClearsChanges(t *testing.T) {
 	}
 	require.NotEmpty(t, m.changes, "precondition: model has pending changes")
 
-	newM, _ := updateSaveConfirm(m, tea.KeyMsg{Type: tea.KeyEnter})
+	newM, _ := updateSaveConfirm(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 
 	assert.False(t, newM.dirty, "dirty MUST be false after a successful save")
 	assert.Empty(t, newM.changes,
@@ -456,7 +457,7 @@ func TestViewSaveConfirm_LongDiffIsScrollableAndFooterVisible(t *testing.T) {
 	assert.Contains(t, before, "Enter/Y Save to disk · Esc/N Back")
 	assert.NotContains(t, before, "agent-39")
 
-	afterPage, _ := updateSaveConfirm(m, tea.KeyMsg{Type: tea.KeyPgDown})
+	afterPage, _ := updateSaveConfirm(m, tea.KeyPressMsg{Code: tea.KeyPgDown})
 	after := viewSaveConfirm(afterPage)
 	assert.NotEqual(t, before, after)
 	assert.Contains(t, after, "Enter/Y Save to disk · Esc/N Back")
@@ -467,10 +468,10 @@ func TestSaveConfirm_EscReturnsImmutableOrigin(t *testing.T) {
 	m.navigationStack = []appState{ScreenAgentList}
 
 	for _, key := range []rune{'s', 's', 'q'} {
-		updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{key}})
+		updated, _ := m.Update(tea.KeyPressMsg{Text: string(key)})
 		m = updated.(Model)
 	}
-	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	updated, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyEsc})
 	m = updated.(Model)
 
 	assert.Equal(t, ScreenAgentList, m.state)
@@ -484,7 +485,7 @@ func TestSaveConfirm_UnrelatedKeysDoNotMutateState(t *testing.T) {
 	originalChanges := append([]Change(nil), m.changes...)
 
 	for _, key := range []rune{'s', 'q', 'x'} {
-		updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{key}})
+		updated, _ := m.Update(tea.KeyPressMsg{Text: string(key)})
 		m = updated.(Model)
 	}
 
@@ -500,7 +501,7 @@ func TestSaveSuccess_ClearsOnNextUserAction(t *testing.T) {
 	m, _ = performSave(m)
 
 	assert.Contains(t, viewAgentList(m), "✓ Saved successfully")
-	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyDown})
+	updated, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyDown})
 	m = updated.(Model)
 	assert.False(t, m.saveSuccess)
 	assert.NotContains(t, viewAgentList(m), "✓ Saved successfully")
@@ -562,7 +563,7 @@ func TestSaveConfirm_CancelLeavesDiskUnchangedButKeepsStagedModel(t *testing.T) 
 	before, err := os.ReadFile(m.config.Path())
 	require.NoError(t, err)
 
-	newM, _ := updateSaveConfirm(m, tea.KeyMsg{Type: tea.KeyEsc})
+	newM, _ := updateSaveConfirm(m, tea.KeyPressMsg{Code: tea.KeyEsc})
 	after, err := os.ReadFile(m.config.Path())
 	require.NoError(t, err)
 
@@ -590,4 +591,80 @@ func TestChangeRepresentationHasNoGenericField(t *testing.T) {
 	assert.False(t, hasField, "non-model config fields MUST NOT be representable")
 	assert.False(t, hasOldValue, "generic old values MUST NOT be representable")
 	assert.False(t, hasNewValue, "generic new values MUST NOT be representable")
+}
+
+// ---------------------------------------------------------------------------
+// Professional restyle — shared modal chrome and semantic feedback
+// (REQ-TUI-PRO-002 / OpenSpec task professional-catppuccin-tui-2.3)
+// ---------------------------------------------------------------------------
+
+// TestViewSaveConfirm_RendersReviewInsideBorderedModal proves the save review
+// renders as the shared bordered overlay treatment (OverlayBoxStyle) instead
+// of appended ad-hoc lines, keeping title, summary, and help inside the modal.
+func TestViewSaveConfirm_RendersReviewInsideBorderedModal(t *testing.T) {
+	m := newSaveConfirmModel(t, true)
+	m.changes = []Change{
+		{Target: "plan", OldModel: "old/plan", NewModel: "new/plan"},
+	}
+	stripped := ansi.Strip(viewSaveConfirm(m))
+	assert.Contains(t, stripped, "╭", "the review MUST be enclosed in the shared bordered overlay treatment")
+	assert.Contains(t, stripped, "Review changes", "screen title must stay inside the modal")
+	assert.Contains(t, stripped, "Save changes to opencode.json?")
+	assert.Contains(t, stripped, "1 net change:", "the change summary must stay inside the modal")
+	assert.Contains(t, stripped, "plan.model")
+	assert.Contains(t, stripped, "Enter/Y Save to disk · Esc/N Back")
+}
+
+// TestViewSaveConfirm_ModalRespectsTerminalWidth proves the modal stays within
+// the terminal at standard and compact widths while the compact help remains
+// complete and legible (REQ-TUI-PRO-002 compact scenario).
+func TestViewSaveConfirm_ModalRespectsTerminalWidth(t *testing.T) {
+	m := newSaveConfirmModel(t, true)
+	for _, width := range []int{80, 40} {
+		m.width = width
+		m.height = 24
+		out := viewSaveConfirm(m)
+		assertRenderedWidthAtMost(t, out, width)
+		stripped := ansi.Strip(out)
+		assert.Contains(t, stripped, "╭")
+		assert.Contains(t, stripped, "Review changes")
+	}
+	m.width = 40
+	stripped := ansi.Strip(viewSaveConfirm(m))
+	assert.Contains(t, stripped, "Y Save · N/Esc Back", "compact help must stay complete at narrow width")
+}
+
+// TestViewSaveConfirm_BackupDisabled_ShowsWarningFeedback proves that saving
+// without backups carries a color-independent warning marker (REQ-TUI-PRO-003).
+func TestViewSaveConfirm_BackupDisabled_ShowsWarningFeedback(t *testing.T) {
+	m := NewModel(fixtureConfig(t), sampleGrouped(), 0)
+	m.state = ScreenSaveConfirm
+	m.navigationStack = []appState{ScreenAgentList}
+	m.dirty = true
+
+	stripped := ansi.Strip(viewSaveConfirm(m))
+	assert.Contains(t, stripped, "⚠", "disabled backups MUST carry the warning marker")
+	assert.Contains(t, stripped, "Backup: disabled", "the disabled-backup fact must stay stated")
+}
+
+// TestViewSaveConfirm_BackupEnabled_NoWarningMarker keeps the warning channel
+// reserved: an ordinary enabled-backup review shows no warning marker.
+func TestViewSaveConfirm_BackupEnabled_NoWarningMarker(t *testing.T) {
+	m := newSaveConfirmModel(t, true) // backupCount=5, no saveError
+
+	stripped := ansi.Strip(viewSaveConfirm(m))
+	assert.NotContains(t, stripped, "⚠", "no warning marker when backups are enabled")
+	assert.Contains(t, stripped, "Retention: keep 5 backups")
+}
+
+// TestViewSaveConfirm_SaveError_ShowsErrorMarkerAndStaysActionable proves
+// save failures render through the error channel with a color-independent
+// marker while the actionable retry guidance stays visible.
+func TestViewSaveConfirm_SaveError_ShowsErrorMarkerAndStaysActionable(t *testing.T) {
+	m := newSaveConfirmModel(t, true)
+	m.saveError = "Save failed; verify disk space and file permissions, then retry: no space left on device"
+
+	stripped := ansi.Strip(viewSaveConfirm(m))
+	assert.Contains(t, stripped, "✗", "errors MUST carry the color-independent error marker")
+	assert.Contains(t, stripped, "Save failed; verify disk space and file permissions, then retry")
 }

@@ -237,6 +237,107 @@ func (c *Config) ResolveEffectiveModel(agentName string) (string, ModelProvenanc
 	return ResolveModel(agentName, globalMD, projectMD, inlineJSON, globalModel)
 }
 
+// ModelSelection is the independent model, variant, and options state.
+type ModelSelection struct {
+	Model   string
+	Variant string
+	Options map[string]interface{}
+}
+
+// ResolveEffectiveVariant resolves variant independently; it has no top-level fallback.
+func (c *Config) ResolveEffectiveVariant(agentName string) (string, ModelProvenance, bool) {
+	globalMD, projectMD := DiscoverMarkdownAgents(DefaultProjectAgentsDir())
+	return ResolveVariant(agentName, globalMD, projectMD, c.agentMap())
+}
+
+// ResolveVariant resolves inline JSON > project Markdown > global Markdown.
+func ResolveVariant(agentName string, globalMD, projectMD map[string]MDAgent, inlineJSON map[string]interface{}) (string, ModelProvenance, bool) {
+	if agent, ok := inlineJSON[agentName].(map[string]interface{}); ok {
+		if value, ok := nonEmptyString(agent["variant"]); ok {
+			return value, ModelProvenanceInlineJSON, true
+		}
+	}
+	if agent, ok := projectMD[agentName]; ok {
+		if value, ok := nonEmptyString(agent.Raw["variant"]); ok {
+			return value, ModelProvenanceProjectMarkdown, true
+		}
+	}
+	if agent, ok := globalMD[agentName]; ok {
+		if value, ok := nonEmptyString(agent.Raw["variant"]); ok {
+			return value, ModelProvenanceGlobalMarkdown, true
+		}
+	}
+	return "", ModelProvenanceNone, false
+}
+
+// ResolveEffectiveSelection resolves each selection field independently.
+func (c *Config) ResolveEffectiveSelection(agentName string) ModelSelection {
+	model, _, _ := c.ResolveEffectiveModel(agentName)
+	variant, _, _ := c.ResolveEffectiveVariant(agentName)
+	return ModelSelection{Model: model, Variant: variant, Options: c.agentOptions(agentName)}
+}
+
+func (c *Config) agentOptions(agentName string) map[string]interface{} {
+	result := map[string]interface{}{}
+	model, _, _ := c.ResolveEffectiveModel(agentName)
+	variant, _, _ := c.ResolveEffectiveVariant(agentName)
+	c.mergeProviderOptions(result, model, variant)
+	globalMD, projectMD := DiscoverMarkdownAgents(DefaultProjectAgentsDir())
+	for _, layer := range []map[string]MDAgent{globalMD, projectMD} {
+		if agent, ok := layer[agentName]; ok {
+			if value, ok := agent.Raw["options"].(map[string]interface{}); ok {
+				mergeOptionMap(result, value)
+			}
+		}
+	}
+	if agent, ok := c.agentMap()[agentName].(map[string]interface{}); ok {
+		if value, ok := agent["options"].(map[string]interface{}); ok {
+			mergeOptionMap(result, value)
+		}
+	}
+	return result
+}
+
+func mergeOptionMap(dst, src map[string]interface{}) {
+	for key, value := range src {
+		dst[key] = value
+	}
+}
+
+func (c *Config) mergeProviderOptions(dst map[string]interface{}, model, variant string) {
+	parts := strings.SplitN(model, "/", 2)
+	if len(parts) != 2 || c.data == nil {
+		return
+	}
+	providers, _ := c.data["provider"].(map[string]interface{})
+	provider, _ := providers[parts[0]].(map[string]interface{})
+	if value, ok := provider["options"].(map[string]interface{}); ok {
+		mergeOptionMap(dst, value)
+	}
+	models, _ := provider["models"].(map[string]interface{})
+	modelConfig, _ := models[parts[1]].(map[string]interface{})
+	if value, ok := modelConfig["options"].(map[string]interface{}); ok {
+		mergeOptionMap(dst, value)
+	}
+	variants, _ := modelConfig["variants"].(map[string]interface{})
+	variantConfig, _ := variants[variant].(map[string]interface{})
+	if value, ok := variantConfig["options"].(map[string]interface{}); ok {
+		mergeOptionMap(dst, value)
+	} else if variantConfig != nil {
+		mergeOptionMap(dst, variantConfig)
+	}
+}
+
+// SetAgentVariantOverride writes only agent.<name>.variant.
+func (c *Config) SetAgentVariantOverride(agentName, variant string) error {
+	return c.SetAgentField(agentName, "variant", variant)
+}
+
+// SetAgentOptionsOverride writes only agent.<name>.options.
+func (c *Config) SetAgentOptionsOverride(agentName string, options map[string]interface{}) error {
+	return c.SetAgentField(agentName, "options", options)
+}
+
 // SetGlobalModel sets the top-level "model" key (REQ-CFG-004).
 func (c *Config) SetGlobalModel(model string) {
 	if c.data == nil {
