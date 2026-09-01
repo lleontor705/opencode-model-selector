@@ -334,7 +334,7 @@ func TestSave_RoundTripPreservesUnknownFields(t *testing.T) {
 	cfg := &Config{
 		path: path,
 		data: map[string]interface{}{
-			"agent":    map[string]interface{}{},
+			"agent":       map[string]interface{}{},
 			"futureField": 42,
 		},
 	}
@@ -377,4 +377,143 @@ func TestSave_OriginalUnchangedOnFailure(t *testing.T) {
 	require.NoError(t, err)
 	assert.JSONEq(t, originalContent, string(content),
 		"original file must be unchanged when Save fails")
+}
+
+// ---------------------------------------------------------------------------
+// Model / Variant / Options fixture and preservation tests (mem-001)
+// ---------------------------------------------------------------------------
+
+func TestLoadConfig_ModelVariantValidFile(t *testing.T) {
+	path := fixturePath(t, "model_variant.json")
+
+	cfg, err := LoadConfig(path)
+	require.NoError(t, err)
+	require.NotNil(t, cfg)
+
+	data := cfg.Data()
+	assert.Contains(t, data, "$schema")
+	assert.Equal(t, "anthropic/claude-sonnet-4-20250514", data["model"])
+	assert.Contains(t, data, "provider")
+	assert.Contains(t, data, "agent")
+	assert.Contains(t, data, "permission")
+	assert.Contains(t, data, "mcp")
+	assert.Contains(t, data, "unknown_extension_block")
+
+	agents, ok := data["agent"].(map[string]interface{})
+	require.True(t, ok)
+
+	planner, ok := agents["planner"].(map[string]interface{})
+	require.True(t, ok)
+	assert.Equal(t, "openai/gpt-4o", planner["model"])
+	assert.Equal(t, "high", planner["variant"])
+	assert.NotNil(t, planner["options"])
+	assert.NotNil(t, planner["custom_metadata"])
+
+	reviewer, ok := agents["reviewer"].(map[string]interface{})
+	require.True(t, ok)
+	assert.Equal(t, "anthropic/claude-sonnet-4-20250514", reviewer["model"])
+	assert.Nil(t, reviewer["variant"])
+
+	explorer, ok := agents["explorer"].(map[string]interface{})
+	require.True(t, ok)
+	assert.Nil(t, explorer["model"])
+	assert.Equal(t, "low", explorer["variant"])
+}
+
+func TestLoadConfig_ModelVariantJSONCEqualsJSON(t *testing.T) {
+	jsonCfg, err := LoadConfig(fixturePath(t, "model_variant.json"))
+	require.NoError(t, err)
+
+	jsoncCfg, err := LoadConfig(fixturePath(t, "model_variant.jsonc"))
+	require.NoError(t, err)
+
+	assert.Equal(t, fixturePath(t, "model_variant.jsonc"), jsoncCfg.Path())
+	assert.Equal(t, jsonCfg.Data(), jsoncCfg.Data(),
+		"model_variant.jsonc must parse to the exact same semantic data as model_variant.json")
+}
+
+func TestSave_ModelVariantRoundTripPreservesAllFieldsAndOptions(t *testing.T) {
+	srcPath := fixturePath(t, "model_variant.json")
+	cfg, err := LoadConfig(srcPath)
+	require.NoError(t, err)
+
+	dir := t.TempDir()
+	cfg.path = filepath.Join(dir, "model_variant.json")
+	require.NoError(t, cfg.Save())
+
+	reloaded, err := LoadConfig(cfg.path)
+	require.NoError(t, err)
+
+	assert.Equal(t, cfg.Data(), reloaded.Data(),
+		"all provider variants, agent options, and unknown blocks must survive save round-trip")
+
+	// Verify absence of synthetic top-level keys or polluted model IDs
+	assert.NotContains(t, reloaded.Data(), "reasoningEffort",
+		"must not invent a top-level reasoningEffort field")
+}
+
+func TestSave_ModelVariantJSONCRoundTripProducesValidJSON(t *testing.T) {
+	srcPath := fixturePath(t, "model_variant.jsonc")
+	cfg, err := LoadConfig(srcPath)
+	require.NoError(t, err)
+
+	dir := t.TempDir()
+	cfg.path = filepath.Join(dir, "model_variant.json")
+	require.NoError(t, cfg.Save())
+
+	content, err := os.ReadFile(cfg.path)
+	require.NoError(t, err)
+
+	var parsed map[string]interface{}
+	require.NoError(t, json.Unmarshal(content, &parsed),
+		"saved output from JSONC must be standard parseable JSON")
+
+	jsonCfg, err := LoadConfig(fixturePath(t, "model_variant.json"))
+	require.NoError(t, err)
+	assert.Equal(t, jsonCfg.Data(), parsed,
+		"saved JSON from JSONC must match standard JSON data")
+}
+
+func TestSave_ModelVariantMutationPreservesUnknownKeys(t *testing.T) {
+	srcPath := fixturePath(t, "model_variant.json")
+	cfg, err := LoadConfig(srcPath)
+	require.NoError(t, err)
+
+	dir := t.TempDir()
+	cfg.path = filepath.Join(dir, "model_variant.json")
+
+	require.NoError(t, cfg.SetAgentField("planner", "variant", "low"))
+	cfg.SetGlobalModel("openai/gpt-4o")
+	require.NoError(t, cfg.Save())
+
+	reloaded, err := LoadConfig(cfg.path)
+	require.NoError(t, err)
+
+	// Modified fields
+	varVal, ok := reloaded.GetAgentField("planner", "variant")
+	require.True(t, ok)
+	assert.Equal(t, "low", varVal)
+
+	globModel, ok := reloaded.GetGlobalModel()
+	require.True(t, ok)
+	assert.Equal(t, "openai/gpt-4o", globModel)
+
+	// Untouched planner fields preserved
+	metaVal, ok := reloaded.GetAgentField("planner", "custom_metadata")
+	require.True(t, ok)
+	metaMap, ok := metaVal.(map[string]interface{})
+	require.True(t, ok)
+	assert.Equal(t, "architecture-team", metaMap["owner"])
+
+	optsVal, ok := reloaded.GetAgentField("planner", "options")
+	require.True(t, ok)
+	optsMap, ok := optsVal.(map[string]interface{})
+	require.True(t, ok)
+	assert.Equal(t, "high", optsMap["effort"])
+	assert.Equal(t, 0.2, optsMap["temperature"])
+
+	// Unknown root block and provider configs preserved
+	assert.Contains(t, reloaded.Data(), "unknown_extension_block")
+	assert.Equal(t, cfg.Data()["unknown_extension_block"], reloaded.Data()["unknown_extension_block"])
+	assert.Equal(t, cfg.Data()["provider"], reloaded.Data()["provider"])
 }

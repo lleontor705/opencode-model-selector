@@ -18,12 +18,12 @@ import (
 	"sort"
 	"strings"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 )
 
 // initAgentMultiSelectScreen populates the multi-select item list from the
 // current Model's agent data. Disabled agents are excluded from selection
-// (they cannot be mutated by SetAgentField anyway). Hidden agents are INCLUDED
+// (they cannot receive model overrides anyway). Hidden agents are INCLUDED
 // per Business Rule 4. Resets cursor and checked state.
 //
 // Items are derived from m.primaryAgents and m.subagents (already populated
@@ -62,20 +62,20 @@ func initAgentMultiSelectScreen(m *Model) {
 //     stays and the status line shows the selection count).
 //   - ESC:          cancel, pop back to AgentList without changes.
 func updateAgentMultiSelect(m Model, msg tea.Msg) (Model, tea.Cmd) {
-	keyMsg, ok := msg.(tea.KeyMsg)
+	keyMsg, ok := msg.(tea.KeyPressMsg)
 	if !ok {
 		return m, nil
 	}
 
 	switch {
-	case keyMsg.Type == tea.KeyEsc || keyMsg.Type == tea.KeyEscape:
+	case keyMsg.Code == tea.KeyEsc:
 		m.multiSelectItems = nil
 		m.multiSelectChecked = nil
 		m.multiSelectCursor = 0
 		m.popScreen()
 		return m, nil
 
-	case keyMsg.Type == tea.KeyEnter:
+	case keyMsg.Code == tea.KeyEnter:
 		var targets []string
 		for i, name := range m.multiSelectItems {
 			if m.multiSelectChecked[i] {
@@ -94,21 +94,19 @@ func updateAgentMultiSelect(m Model, msg tea.Msg) (Model, tea.Cmd) {
 		initModelSelectionScreen(&m)
 		return m, nil
 
-	case keyMsg.Type == tea.KeyRunes && len(keyMsg.Runes) == 1 && keyMsg.Runes[0] == ' ':
+	case keyMsg.Code == tea.KeySpace || keyMsg.Text == " ":
 		if m.multiSelectCursor >= 0 && m.multiSelectCursor < len(m.multiSelectChecked) {
 			m.multiSelectChecked[m.multiSelectCursor] = !m.multiSelectChecked[m.multiSelectCursor]
 		}
 		return m, nil
 
-	case keyMsg.Type == tea.KeyDown ||
-		(keyMsg.Type == tea.KeyRunes && len(keyMsg.Runes) == 1 && keyMsg.Runes[0] == 'j'):
+	case keyMsg.Code == tea.KeyDown || keyMsg.Text == "j":
 		if m.multiSelectCursor < len(m.multiSelectItems)-1 {
 			m.multiSelectCursor++
 		}
 		return m, nil
 
-	case keyMsg.Type == tea.KeyUp ||
-		(keyMsg.Type == tea.KeyRunes && len(keyMsg.Runes) == 1 && keyMsg.Runes[0] == 'k'):
+	case keyMsg.Code == tea.KeyUp || keyMsg.Text == "k":
 		if m.multiSelectCursor > 0 {
 			m.multiSelectCursor--
 		}

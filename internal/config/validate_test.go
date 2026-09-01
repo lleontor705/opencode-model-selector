@@ -23,52 +23,52 @@ func TestValidateModel(t *testing.T) {
 	}
 
 	tests := []struct {
-		name     string
-		modelID  string
+		name      string
+		modelID   string
 		available []opencode.Model
-		want     bool
+		want      bool
 	}{
 		{
-			name:     "model in available list returns true",
-			modelID:  "opencode-go/glm-5.2",
+			name:      "model in available list returns true",
+			modelID:   "opencode-go/glm-5.2",
 			available: available,
-			want:     true,
+			want:      true,
 		},
 		{
-			name:     "model not in available list returns false",
-			modelID:  "fake/model",
+			name:      "model not in available list returns false",
+			modelID:   "fake/model",
 			available: available,
-			want:     false,
+			want:      false,
 		},
 		{
-			name:     "different case returns false (case-sensitive)",
-			modelID:  "OpenCode-Go/GLM-5.2",
+			name:      "different case returns false (case-sensitive)",
+			modelID:   "OpenCode-Go/GLM-5.2",
 			available: available,
-			want:     false,
+			want:      false,
 		},
 		{
-			name:     "empty available list returns false",
-			modelID:  "any/model",
+			name:      "empty available list returns false",
+			modelID:   "any/model",
 			available: []opencode.Model{},
-			want:     false,
+			want:      false,
 		},
 		{
-			name:     "empty modelID returns false",
-			modelID:  "",
+			name:      "empty modelID returns false",
+			modelID:   "",
 			available: available,
-			want:     false,
+			want:      false,
 		},
 		{
-			name:     "partial match without provider prefix returns false",
-			modelID:  "glm-5.2",
+			name:      "partial match without provider prefix returns false",
+			modelID:   "glm-5.2",
 			available: available,
-			want:     false,
+			want:      false,
 		},
 		{
-			name:     "match by FullName field returns true",
-			modelID:  "anthropic/claude-3.5-sonnet",
+			name:      "match by FullName field returns true",
+			modelID:   "anthropic/claude-3.5-sonnet",
 			available: available,
-			want:     true,
+			want:      true,
 		},
 	}
 

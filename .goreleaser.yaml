@@ -1,7 +1,7 @@
 version: 2
 
 builds:
-  - main: .
+  - main: ./cmd/ocs
     binary: ocs
     env:
       - CGO_ENABLED=0

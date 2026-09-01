@@ -3,8 +3,8 @@
 //
 // This file contains the root Model struct, the appState state machine, and
 // the global Update() dispatcher. Per-screen view and key handling live in
-// sibling files (agent_list.go, agent_detail.go, model_select.go,
-// field_input.go, save_confirm.go) implemented in subsequent tasks. Until
+// sibling files (agent_list.go, model_select.go, save_confirm.go) implemented
+// in subsequent tasks. Until
 // those land, View() returns placeholder strings so the dispatcher is fully
 // exercised by tests.
 //
@@ -12,13 +12,15 @@
 package tui
 
 import (
-	"reflect"
+	"context"
+	"sort"
 
-	"github.com/charmbracelet/bubbles/textinput"
-	"github.com/charmbracelet/bubbles/viewport"
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/bubbles/v2/textinput"
+	"charm.land/bubbles/v2/viewport"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 
+	"github.com/lleontor705/opencode-model-selector/internal/agentcatalog"
 	"github.com/lleontor705/opencode-model-selector/internal/appname"
 	"github.com/lleontor705/opencode-model-selector/internal/config"
 	"github.com/lleontor705/opencode-model-selector/internal/opencode"
@@ -37,25 +39,16 @@ const (
 	fieldEditingBulkList = "bulk-list"
 )
 
-// appState enumerates the five screens of the TUI state machine (design #606,
-// Section 2 Decision 3). Ordering matters only for iota stability; do NOT
-// re-order existing entries.
+// appState enumerates the screens of the TUI state machine.
 type appState int
 
 const (
 	// ScreenAgentList is the entry screen: lists primary agents, subagents,
 	// and the global default model (REQ-TUI-002, REQ-TUI-003).
 	ScreenAgentList appState = iota
-	// ScreenAgentDetail shows the 6 editable fields for a single agent
-	// (REQ-TUI-004).
-	ScreenAgentDetail
 	// ScreenModelSelection shows all available models grouped by provider
 	// with a fuzzy filter (REQ-TUI-005).
 	ScreenModelSelection
-	// ScreenFieldInput captures free-form text for non-model fields
-	// (temperature, top_p, color, steps) with per-field validation
-	// (REQ-TUI-006).
-	ScreenFieldInput
 	// ScreenSaveConfirm shows a summary of pending changes and triggers the
 	// atomic save flow (REQ-TUI-007).
 	ScreenSaveConfirm
@@ -63,25 +56,18 @@ const (
 	// bulk operations. ENTER transitions to ScreenModelSelection with
 	// fieldEditing="bulk-list".
 	ScreenAgentMultiSelect
+	// ScreenVariantSelection shows available variants for the selected model.
+	ScreenVariantSelection
 )
 
-// editableFieldSchema is the fixed list of fields exposed on the Agent Detail
-// screen. Order matches the design's transition table (Section 7) and the
-// validation table (Section 7.1).
-var editableFieldSchema = []string{
-	"model", "temperature", "top_p", "color", "steps", "disable",
-}
-
-// Change records a single in-memory mutation that will be persisted on save.
-// Target is "global" for the global default model or the agent name for
-// per-agent edits; Field is the config key (model, temperature, ...). OldVal
-// and NewVal carry the raw interface{} values from the config layer so the
-// save-confirm screen can render a human-readable diff.
+// Change records one model or variant mutation pending persistence. Target is
+// "global" or a catalog agent name; no generic config field is representable.
 type Change struct {
-	Target string
-	Field  string
-	OldVal interface{}
-	NewVal interface{}
+	Target     string
+	OldModel   string
+	NewModel   string
+	OldVariant string
+	NewVariant string
 }
 
 // Model is the root Bubbletea model. It carries ALL TUI state in a single
@@ -107,11 +93,15 @@ type Model struct {
 
 	// Each selectable screen owns its cursor so nested screens cannot overwrite
 	// the selection that must be restored when returning.
-	agentCursor  int
-	detailCursor int
-	modelCursor  int
-	// selectedAgent is the agent name being edited on ScreenAgentDetail.
+	agentCursor   int
+	modelCursor   int
+	variantCursor int
+	// selectedAgent is the agent whose model is being edited.
 	selectedAgent string
+	// pendingSelectedModel is the model chosen in ScreenModelSelection awaiting variant selection.
+	pendingSelectedModel opencode.Model
+	// availableVariants holds the compatible variants for pendingSelectedModel.
+	availableVariants []opencode.VariantDescriptor
 	// navigationStack stores immutable screen origins for nested transitions.
 	navigationStack []appState
 
@@ -119,21 +109,29 @@ type Model struct {
 
 	primaryAgents  []string
 	subagents      []string
+	allAgents      []string
 	disabledAgents []string
-	// editableFields is the schema shown on the Agent Detail screen.
-	editableFields []string
+	agentCatalog   agentcatalog.Catalog
+	catalogByName  map[string]agentcatalog.AgentRecord
+	// mdOnlyAgents is the set of agent names that currently exist ONLY in
+	// markdown (no inline-JSON backing). It is recomputed by NewModel and by
+	// performSave so the [MD] badge stays live: once a JSON override is saved
+	// for an agent, it leaves this set. The badge hints that the base is a
+	// markdown file; it does NOT mean the agent is non-editable — ENTER opens
+	// the model picker and model edits persist as inline-JSON overrides. The .md
+	// file is never written.
+	mdOnlyAgents map[string]bool
 
 	// --- Sub-components ---
 
 	// filterInput is the fuzzy filter for model selection.
 	filterInput textinput.Model
-	// fieldInput captures typed values on ScreenFieldInput.
-	fieldInput textinput.Model
 	// Each scrolling screen owns a Bubbles viewport. The existing screen-owned
 	// cursors remain the source of truth; viewport offsets only control clipping.
-	agentViewport viewport.Model
-	modelViewport viewport.Model
-	saveViewport  viewport.Model
+	agentViewport   viewport.Model
+	modelViewport   viewport.Model
+	variantViewport viewport.Model
+	saveViewport    viewport.Model
 	// filteredModels is the result of applying filterInput.Value() to
 	// flatModels. Maintained by model_select.go in a later task.
 	filteredModels []opencode.Model
@@ -142,16 +140,15 @@ type Model struct {
 
 	// dirty is true when any in-memory edit has not yet been persisted.
 	dirty bool
-	// changes records the net in-memory mutations since the last successful
-	// save, coalesced by target and field for review before writing to disk.
+	// changes records net model mutations since the last successful save,
+	// coalesced by target for review before writing to disk.
 	changes []Change
 	// quitConfirm is true when the "quit anyway?" confirmation overlay is
 	// active on the Agent List screen. It is a sub-state of ScreenAgentList,
 	// not a full screen. When true, only y/Y/ENTER (confirm) and n/N/ESC
 	// (cancel) are accepted; all other keys are ignored (REQ-TUI-003).
 	quitConfirm bool
-	// fieldEditing records which field is being edited on ScreenFieldInput
-	// (or "global" / "model" sentinel values).
+	// fieldEditing identifies the model assignment target or bulk flow.
 	fieldEditing string
 	// bulkTargets holds the agent names selected on ScreenAgentMultiSelect.
 	// Populated when transitioning to ScreenModelSelection with
@@ -186,18 +183,34 @@ type Model struct {
 //
 // Spec: REQ-TUI-001 — Happy path / Edge case / Error — nil config.
 func NewModel(cfg *config.Config, grouped map[string][]opencode.Model, backupCount int) Model {
+	// Live discovery is wired by cmd in T13. Preserve existing callers with a
+	// deterministic, degraded static catalog until that integration lands.
+	var catalog agentcatalog.Catalog
+	if cfg == nil {
+		catalog = agentcatalog.Discovery{}.Discover(context.Background(), "")
+	} else {
+		catalog = agentcatalog.Discovery{Static: cfg}.Discover(context.Background(), "")
+	}
+	return NewModelWithCatalog(cfg, grouped, backupCount, catalog)
+}
+
+// NewModelWithCatalog constructs the TUI from an already discovered catalog.
+// Discovery and process lifecycle concerns intentionally remain outside TUI.
+func NewModelWithCatalog(cfg *config.Config, grouped map[string][]opencode.Model, backupCount int, catalog agentcatalog.Catalog) Model {
 	// Normalize the grouped map so the rest of the code can range over it
 	// unconditionally.
 	if grouped == nil {
 		grouped = map[string][]opencode.Model{}
 	}
 
+	catalog.Buckets = agentcatalog.Classify(catalog.Records())
 	m := Model{
-		state:          ScreenAgentList,
-		config:         cfg,
-		groupedModels:  grouped,
-		editableFields: append([]string(nil), editableFieldSchema...),
-		backupCount:    backupCount,
+		state:         ScreenAgentList,
+		config:        cfg,
+		groupedModels: grouped,
+		backupCount:   backupCount,
+		agentCatalog:  catalog,
+		catalogByName: make(map[string]agentcatalog.AgentRecord),
 	}
 
 	// Flatten the grouped map into a single slice for the fuzzy filter. The
@@ -206,25 +219,92 @@ func NewModel(cfg *config.Config, grouped map[string][]opencode.Model, backupCou
 	for _, models := range grouped {
 		m.flatModels = append(m.flatModels, models...)
 	}
+	if cfg != nil && cfg.Data() != nil {
+		for i := range m.flatModels {
+			if len(m.flatModels[i].Variants) == 0 {
+				m.flatModels[i].Variants = opencode.ExtractModelVariants(cfg.Data(), m.flatModels[i].Provider, m.flatModels[i].ID)
+			}
+		}
+	}
 
 	// Initialize textinput sub-components so later handlers can Update them
 	// without re-allocating.
 	m.filterInput = textinput.New()
-	m.fieldInput = textinput.New()
-	m.agentViewport = viewport.New(0, 0)
-	m.modelViewport = viewport.New(0, 0)
-	m.saveViewport = viewport.New(0, 0)
+	m.agentViewport = viewport.New()
+	m.modelViewport = viewport.New()
+	m.variantViewport = viewport.New()
+	m.saveViewport = viewport.New()
 
-	// Populate agent lists from the config when present. GetAgents already
-	// filters out system agents (REQ-CFG-008) so we do not repeat that here.
+	for _, record := range catalog.Buckets.Primary {
+		m.primaryAgents = append(m.primaryAgents, record.Name)
+		m.catalogByName[record.Name] = record
+	}
+	for _, record := range catalog.Buckets.Subagent {
+		m.subagents = append(m.subagents, record.Name)
+		m.catalogByName[record.Name] = record
+	}
+	for _, record := range catalog.Buckets.All {
+		m.allAgents = append(m.allAgents, record.Name)
+		m.catalogByName[record.Name] = record
+	}
+
+	// Editing metadata remains config-backed until action routing changes.
 	if cfg != nil {
-		primary, subagents, disabled := cfg.GetAgents()
-		m.primaryAgents = primary
-		m.subagents = subagents
+		_, _, disabled := cfg.GetAgents()
 		m.disabledAgents = disabled
+		m.mdOnlyAgents = computeMdOnly(cfg)
 	}
 
 	return m
+}
+
+// computeMdOnly returns the set of agent names that are markdown-only (no
+// inline-JSON backing), derived from the config's merged agent view.
+func computeMdOnly(cfg *config.Config) map[string]bool {
+	out := map[string]bool{}
+	if cfg == nil {
+		return out
+	}
+	for name, merged := range cfg.MergedAgents() {
+		if merged.MdOnly {
+			out[name] = true
+		}
+	}
+	return out
+}
+
+// IsMarkdownOnly reports whether name is currently a markdown-only agent (no
+// inline-JSON backing yet). This is informational only — used to render the
+// [MD] badge hint. It does NOT gate editing: markdown-backed agents are
+// editable, and model edits persist as inline-JSON overrides.
+func (m Model) IsMarkdownOnly(name string) bool {
+	return m.mdOnlyAgents[name]
+}
+
+// selectableCatalogNames returns each editable catalog identity exactly once,
+// across primary, subagent, and all-role buckets.
+func selectableCatalogNames(m Model) []string {
+	disabled := make(map[string]struct{}, len(m.disabledAgents))
+	for _, name := range m.disabledAgents {
+		disabled[name] = struct{}{}
+	}
+	seen := make(map[string]struct{}, len(m.catalogByName))
+	names := make([]string, 0, len(m.catalogByName))
+	for _, record := range m.agentCatalog.Records() {
+		if record.Name == "" {
+			continue
+		}
+		if _, excluded := disabled[record.Name]; excluded {
+			continue
+		}
+		if _, duplicate := seen[record.Name]; duplicate {
+			continue
+		}
+		seen[record.Name] = struct{}{}
+		names = append(names, record.Name)
+	}
+	sort.Strings(names)
+	return names
 }
 
 func (m *Model) pushScreen(next appState) {
@@ -236,6 +316,11 @@ func (m *Model) popScreen() {
 	if len(m.navigationStack) == 0 {
 		m.state = ScreenAgentList
 		return
+	}
+	if m.state == ScreenVariantSelection {
+		m.pendingSelectedModel = opencode.Model{}
+		m.availableVariants = nil
+		m.variantCursor = 0
 	}
 	if m.state == ScreenModelSelection &&
 		(m.fieldEditing == fieldEditingBulkAll || m.fieldEditing == fieldEditingBulkList) {
@@ -254,52 +339,60 @@ func (m Model) Init() tea.Cmd {
 	return nil
 }
 
-// RecordChange coalesces mutations by target and field. The first old value is
-// retained while later edits replace the pending new value. Reverting to the
-// original value removes the net change entirely.
-func (m *Model) RecordChange(target, field string, oldVal, newVal interface{}) {
+// RecordModelChange coalesces model mutations by target. The first old model
+// is retained while later edits replace the pending new model. Reverting to
+// the original model removes the net change entirely.
+func (m *Model) RecordModelChange(target, oldModel, newModel string) {
 	for i := range m.changes {
 		change := &m.changes[i]
-		if change.Target != target || change.Field != field {
+		if change.Target != target {
 			continue
 		}
-		if valuesEqual(change.OldVal, newVal) {
+		change.NewModel = newModel
+		if change.OldModel == change.NewModel && change.OldVariant == change.NewVariant {
 			m.changes = append(m.changes[:i], m.changes[i+1:]...)
-		} else {
-			change.NewVal = newVal
 		}
 		m.dirty = len(m.changes) > 0
 		return
 	}
 
-	if valuesEqual(oldVal, newVal) {
+	if oldModel == newModel {
 		m.dirty = len(m.changes) > 0
 		return
 	}
-	m.changes = append(m.changes, Change{Target: target, Field: field, OldVal: oldVal, NewVal: newVal})
+	m.changes = append(m.changes, Change{Target: target, OldModel: oldModel, NewModel: newModel})
 	m.dirty = true
 }
 
-func valuesEqual(left, right interface{}) bool {
-	if reflect.DeepEqual(left, right) {
-		return true
+// RecordChange coalesces independent model and variant mutations by target.
+// Reverting both model and variant to their original values removes the net change.
+func (m *Model) RecordChange(target, oldModel, newModel, oldVariant, newVariant string) {
+	for i := range m.changes {
+		change := &m.changes[i]
+		if change.Target != target {
+			continue
+		}
+		change.NewModel = newModel
+		change.NewVariant = newVariant
+		if change.OldModel == change.NewModel && change.OldVariant == change.NewVariant {
+			m.changes = append(m.changes[:i], m.changes[i+1:]...)
+		}
+		m.dirty = len(m.changes) > 0
+		return
 	}
-	leftNumber, leftOK := numericValue(left)
-	rightNumber, rightOK := numericValue(right)
-	return leftOK && rightOK && leftNumber == rightNumber
-}
 
-func numericValue(value interface{}) (float64, bool) {
-	switch number := value.(type) {
-	case int:
-		return float64(number), true
-	case int64:
-		return float64(number), true
-	case float64:
-		return number, true
-	default:
-		return 0, false
+	if oldModel == newModel && oldVariant == newVariant {
+		m.dirty = len(m.changes) > 0
+		return
 	}
+	m.changes = append(m.changes, Change{
+		Target:     target,
+		OldModel:   oldModel,
+		NewModel:   newModel,
+		OldVariant: oldVariant,
+		NewVariant: newVariant,
+	})
+	m.dirty = true
 }
 
 // Update is the global key/message dispatcher. Ctrl+C remains global, while
@@ -314,19 +407,22 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
-		m.filterInput.Width = max(1, msg.Width-lipgloss.Width("🔍 Search: ")-1)
-		m.agentViewport.Width = max(1, msg.Width)
-		m.agentViewport.Height = agentListViewportHeight(m)
-		m.modelViewport.Width = max(1, msg.Width)
-		m.modelViewport.Height = modelSelectionViewportHeight(m)
-		m.saveViewport.Width = max(1, msg.Width)
-		m.saveViewport.Height = saveReviewViewportHeight(m)
+		m.filterInput.SetWidth(max(1, msg.Width-lipgloss.Width("🔍 Search: ")-1))
+		m.agentViewport.SetWidth(max(1, msg.Width))
+		m.agentViewport.SetHeight(agentListViewportHeight(m))
+		m.modelViewport.SetWidth(max(1, msg.Width))
+		m.modelViewport.SetHeight(modelSelectionViewportHeight(m))
+		m.variantViewport.SetWidth(max(1, msg.Width))
+		m.variantViewport.SetHeight(variantSelectionViewportHeight(m))
+		m.saveViewport.SetWidth(max(1, msg.Width))
+		m.saveViewport.SetHeight(saveReviewViewportHeight(m))
 		syncAgentViewport(&m)
 		syncModelViewport(&m)
+		syncVariantViewport(&m)
 		syncSaveViewport(&m)
 		return m, nil
 
-	case tea.KeyMsg:
+	case tea.KeyPressMsg:
 		// Bubble Tea renders after every Update. A successful save therefore gets
 		// one complete Agent List frame before the next user action clears it.
 		if m.saveSuccess {
@@ -347,7 +443,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 		// Ctrl+C: show quit confirmation if dirty, else quit
-		if msg.Type == tea.KeyCtrlC {
+		if msg.Code == 'c' && msg.Mod.Contains(tea.ModCtrl) {
 			if m.dirty {
 				m.quitConfirm = true
 				return m, nil
@@ -359,18 +455,22 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.state == ScreenModelSelection {
 			return updateModelSelection(m, msg)
 		}
-		if m.state == ScreenFieldInput {
-			return updateFieldInput(m, msg)
+		if m.state == ScreenVariantSelection {
+			return updateVariantSelection(m, msg)
 		}
 		if m.state == ScreenSaveConfirm {
 			return updateSaveConfirm(m, msg)
 		}
 		if m.state == ScreenAgentMultiSelect {
-			return updateAgentMultiSelect(m, msg)
+			updatedM, cmd := updateAgentMultiSelect(m, msg)
+			if m.state != ScreenModelSelection && updatedM.state == ScreenModelSelection && cmd == nil {
+				cmd = updatedM.filterInput.Focus()
+			}
+			return updatedM, cmd
 		}
 
 		// Printable q/s are commands only on non-input screens.
-		if msg.Type == tea.KeyRunes && len(msg.Runes) == 1 && msg.Runes[0] == 'q' {
+		if msg.Text == "q" {
 			if m.dirty {
 				m.quitConfirm = true
 				return m, nil
@@ -379,7 +479,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 		// 's': transition to save-confirm if dirty
-		if msg.Type == tea.KeyRunes && len(msg.Runes) == 1 && msg.Runes[0] == 's' {
+		if msg.Text == "s" {
 			if m.dirty {
 				m.pushScreen(ScreenSaveConfirm)
 			}
@@ -391,25 +491,37 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Screen-specific key dispatch
 		switch m.state {
 		case ScreenAgentList:
-			return updateAgentList(m, msg)
-		case ScreenAgentDetail:
-			return updateAgentDetail(m, msg)
+			updatedM, cmd := updateAgentList(m, msg)
+			if m.state != ScreenModelSelection && updatedM.state == ScreenModelSelection && cmd == nil {
+				cmd = updatedM.filterInput.Focus()
+			}
+			return updatedM, cmd
 		}
 
 		return m, nil
 	}
 
-	// Non-key, non-resize messages are passed through unchanged. Sub-components
-	// (textinput) will intercept their own messages in later tasks.
+	// Non-key, non-resize messages are routed to active screens/sub-components.
+	if m.state == ScreenModelSelection {
+		return updateModelSelection(m, msg)
+	}
+	if m.state == ScreenVariantSelection {
+		return updateVariantSelection(m, msg)
+	}
+
 	return m, nil
 }
 
-// View dispatches to the per-screen renderer based on the current state.
-//
-// Per-screen rendering is implemented in G2-T2 through G2-T5. Until those
-// land, every screen returns a non-empty placeholder so the dispatcher is
-// fully exercised by tests and a manual launch does not crash.
-func (m Model) View() string {
+// View dispatches to the per-screen renderer based on the current state and
+// returns a Bubble Tea v2 View whose Content carries the rendered screen body
+// and whose AltScreen flag keeps the TUI in the alternate screen buffer.
+func (m Model) View() tea.View {
+	return tea.View{Content: m.renderBody(), AltScreen: true}
+}
+
+// renderBody builds the plain-text screen body. Error and terminal-too-small
+// paths flow through the same wrapper as the regular screens.
+func (m Model) renderBody() string {
 	// Error-tolerant path: if no config was supplied, surface an error
 	// message instead of dereferencing a nil pointer in any screen handler.
 	if m.config == nil {
@@ -423,12 +535,10 @@ func (m Model) View() string {
 	switch m.state {
 	case ScreenAgentList:
 		return viewAgentList(m)
-	case ScreenAgentDetail:
-		return viewAgentDetail(m)
 	case ScreenModelSelection:
 		return viewModelSelection(m)
-	case ScreenFieldInput:
-		return viewFieldInput(m)
+	case ScreenVariantSelection:
+		return viewVariantSelection(m)
 	case ScreenSaveConfirm:
 		return viewSaveConfirm(m)
 	case ScreenAgentMultiSelect:
@@ -439,14 +549,14 @@ func (m Model) View() string {
 }
 
 func ensureViewportRange(vp *viewport.Model, start, end int) {
-	if vp.Height <= 0 {
+	if vp.Height() <= 0 {
 		return
 	}
-	if start < vp.YOffset {
+	if start < vp.YOffset() {
 		vp.SetYOffset(start)
 		return
 	}
-	if end >= vp.YOffset+vp.Height {
-		vp.SetYOffset(max(0, end-vp.Height+1))
+	if end >= vp.YOffset()+vp.Height() {
+		vp.SetYOffset(max(0, end-vp.Height()+1))
 	}
 }

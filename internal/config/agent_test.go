@@ -1,6 +1,7 @@
 package config
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -40,6 +41,10 @@ func TestIsSystemAgent_CaseSensitive(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestGetAgents_ReturnsThreeGroupsExcludingSystem(t *testing.T) {
+	// Isolate $HOME so the host's global markdown agents do not leak into the
+	// pure-JSON fixture's GetAgents result (markdown discovery is HOME-based).
+	setHomeEnv(t, t.TempDir())
+
 	cfg, err := LoadConfig(fixturePath(t, "opencode.json"))
 	require.NoError(t, err)
 
@@ -241,4 +246,563 @@ func TestGetAgentMode_DefaultAll(t *testing.T) {
 	// Agent without mode field returns "all" default.
 	require.NoError(t, cfg.SetAgentField("no-mode-agent", "description", "test"))
 	assert.Equal(t, "all", cfg.GetAgentMode("no-mode-agent"))
+}
+
+// ---------------------------------------------------------------------------
+// GetAgents markdown integration + READ-ONLY save (T-B5)
+//
+// GetAgents now also discovers and merges markdown agents (global + project)
+// with inline-JSON agents, returning alphabetically ordered slices. Markdown
+// agents are READ-ONLY: Save writes JSON only and never touches .md files.
+// Pure-JSON behavior of GetAgentField/GetGlobalModel/GetAgentMode/LoadConfig is
+// unchanged (REGRESS-001).
+// ---------------------------------------------------------------------------
+
+// writeGlobalMD writes a markdown agent into <home>/.config/opencode/agents and
+// returns its path.
+func writeGlobalMD(t *testing.T, home, name, content string) string {
+	t.Helper()
+	dir := filepath.Join(home, ".config", "opencode", "agents")
+	require.NoError(t, os.MkdirAll(dir, 0o755))
+	p := filepath.Join(dir, name)
+	require.NoError(t, os.WriteFile(p, []byte(content), 0o644))
+	return p
+}
+
+// TestGetAgents_IncludesMDAgents verifies that global markdown agents appear in
+// the primary/subagent lists alongside inline-JSON agents.
+func TestGetAgents_IncludesMDAgents(t *testing.T) {
+	home := t.TempDir()
+	setHomeEnv(t, home)
+	writeGlobalMD(t, home, "md-sub.md", "---\nmode: subagent\nmodel: md-model\n---\nMd body.\n")
+	writeGlobalMD(t, home, "md-prim.md", "---\nmode: primary\n---\nPrim body.\n")
+
+	cfg := &Config{data: map[string]interface{}{
+		"agent": map[string]interface{}{
+			"build": map[string]interface{}{"mode": "primary"},
+		},
+	}}
+
+	primary, subagents, _ := cfg.GetAgents()
+	assert.Contains(t, primary, "build", "inline-JSON primary agent present")
+	assert.Contains(t, primary, "md-prim", "global md primary agent included")
+	assert.Contains(t, subagents, "md-sub", "global md subagent included")
+}
+
+// TestGetAgents_AlphabeticalOrder verifies primary/subagents/disabled are
+// returned in deterministic alphabetical order.
+func TestGetAgents_AlphabeticalOrder(t *testing.T) {
+	setHomeEnv(t, t.TempDir()) // no md -> pure JSON
+	cfg := &Config{data: map[string]interface{}{
+		"agent": map[string]interface{}{
+			"zebra": map[string]interface{}{"mode": "primary"},
+			"alpha": map[string]interface{}{"mode": "primary"},
+			"mid":   map[string]interface{}{"mode": "subagent"},
+			"beta":  map[string]interface{}{"mode": "subagent"},
+		},
+	}}
+
+	primary, subagents, disabled := cfg.GetAgents()
+	assert.Equal(t, []string{"alpha", "zebra"}, primary, "primary must be alphabetical")
+	assert.Equal(t, []string{"beta", "mid"}, subagents, "subagents must be alphabetical")
+	assert.Empty(t, disabled)
+}
+
+// TestSave_DoesNotWriteMarkdownAgents verifies that Save (JSON-only) never
+// creates or modifies markdown agent files. Markdown is READ-ONLY in v1.
+func TestSave_DoesNotWriteMarkdownAgents(t *testing.T) {
+	home := t.TempDir()
+	setHomeEnv(t, home)
+	mdContent := []byte("---\nmode: subagent\nmodel: original\n---\nOriginal body.\n")
+	mdPath := writeGlobalMD(t, home, "locked.md", string(mdContent))
+
+	cfgPath := filepath.Join(t.TempDir(), "opencode.json")
+	cfg := &Config{path: cfgPath, data: map[string]interface{}{
+		"agent": map[string]interface{}{
+			"build": map[string]interface{}{"mode": "primary"},
+		},
+	}}
+	require.NoError(t, cfg.SetAgentField("build", "model", "openai/gpt-5"))
+	require.NoError(t, cfg.Save())
+
+	// The markdown file must be byte-for-byte unchanged.
+	got, err := os.ReadFile(mdPath)
+	require.NoError(t, err)
+	assert.Equal(t, string(mdContent), string(got),
+		"Save MUST NOT modify markdown agent files")
+
+	// No new markdown files created in the agents dir.
+	matches, err := filepath.Glob(filepath.Join(home, ".config", "opencode", "agents", "*.md"))
+	require.NoError(t, err)
+	assert.Len(t, matches, 1, "Save must not create new markdown files")
+}
+
+// TestInlineJSON_PathsUnchanged verifies that with no markdown present, the
+// pure-JSON read paths (GetAgentField/GetGlobalModel/GetAgentMode and the
+// GetAgents grouping/counts) are identical to pre-change behavior (REGRESS-001).
+func TestInlineJSON_PathsUnchanged(t *testing.T) {
+	setHomeEnv(t, t.TempDir()) // no md -> pure JSON
+	cfg, err := LoadConfig(fixturePath(t, "opencode.json"))
+	require.NoError(t, err)
+
+	// GetAgentField reads inline JSON only.
+	val, ok := cfg.GetAgentField("code-reviewer", "model")
+	require.True(t, ok)
+	assert.Equal(t, "anthropic/claude-sonnet-4-20250514", val)
+
+	val, ok = cfg.GetAgentField("build", "model")
+	assert.False(t, ok, "build has no model field (unchanged)")
+	assert.Nil(t, val)
+
+	// GetGlobalModel unchanged.
+	_, gok := cfg.GetGlobalModel()
+	assert.False(t, gok, "fixture has no top-level model key")
+
+	// GetAgentMode unchanged.
+	assert.Equal(t, "subagent", cfg.GetAgentMode("code-reviewer"))
+	assert.Equal(t, "primary", cfg.GetAgentMode("plan"))
+
+	// GetAgents grouping/counts unchanged for pure JSON (system excluded).
+	primary, subagents, disabled := cfg.GetAgents()
+	assert.Len(t, primary, 2)
+	assert.Len(t, subagents, 9)
+	assert.Len(t, disabled, 1)
+}
+
+func TestGetAgentGroups_RetainsAllModesAcrossStaticSources(t *testing.T) {
+	home := t.TempDir()
+	setHomeEnv(t, home)
+	writeGlobalMD(t, home, "global-default.md", "---\nmodel: global-model\n---\nGlobal.\n")
+	writeGlobalMD(t, home, "shared.md", "---\nmode: primary\n---\nGlobal shared.\n")
+
+	projectRoot := t.TempDir()
+	projectAgents := filepath.Join(projectRoot, ".opencode", "agents")
+	require.NoError(t, os.MkdirAll(projectAgents, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(projectAgents, "project-all.md"), []byte("---\nmode: all\n---\nProject.\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(projectAgents, "shared.md"), []byte("---\nmode: subagent\n---\nProject shared.\n"), 0o644))
+	oldWD, err := os.Getwd()
+	require.NoError(t, err)
+	require.NoError(t, os.Chdir(projectRoot))
+	t.Cleanup(func() { require.NoError(t, os.Chdir(oldWD)) })
+
+	cfg := &Config{data: map[string]interface{}{
+		"agent": map[string]interface{}{
+			"z-explicit": map[string]interface{}{"mode": " ALL "},
+			"a-empty":    map[string]interface{}{"mode": ""},
+			"m-missing":  map[string]interface{}{"description": "default mode"},
+			"bad-mode":   map[string]interface{}{"mode": 42},
+			"shared":     map[string]interface{}{"mode": " PRIMARY "},
+			"disabled":   map[string]interface{}{"mode": "all", "disable": true},
+		},
+	}}
+
+	groups := cfg.GetAgentGroups()
+	assert.Equal(t, []string{"shared"}, groups.Primary, "inline JSON mode wins and is normalized")
+	assert.Empty(t, groups.Subagents, "project mode must not duplicate an inline primary")
+	assert.Equal(t, []string{
+		"a-empty", "bad-mode", "disabled", "global-default", "m-missing", "project-all", "z-explicit",
+	}, groups.All, "missing, empty, explicit, and invalid modes fall back to the distinct all bucket")
+	assert.Equal(t, []string{"disabled"}, groups.Disabled)
+
+	for _, name := range groups.All {
+		assert.NotContains(t, groups.Primary, name)
+		assert.NotContains(t, groups.Subagents, name)
+	}
+}
+
+func TestGetAgents_CompatibilitySignatureUsesNewGrouping(t *testing.T) {
+	setHomeEnv(t, t.TempDir())
+	cfg := &Config{data: map[string]interface{}{
+		"agent": map[string]interface{}{
+			"primary": map[string]interface{}{"mode": "PRIMARY"},
+			"sub":     map[string]interface{}{"mode": " SubAgent "},
+			"all":     map[string]interface{}{"mode": "all", "disable": true},
+		},
+	}}
+
+	primary, subagents, disabled := cfg.GetAgents()
+	assert.Equal(t, []string{"primary"}, primary)
+	assert.Equal(t, []string{"sub"}, subagents)
+	assert.Equal(t, []string{"all"}, disabled)
+	assert.Equal(t, []string{"all"}, cfg.GetAgentGroups().All)
+}
+
+// ---------------------------------------------------------------------------
+// GetMergedAgentField — display-only reader honoring md + inline-JSON
+// precedence (T-B7)
+//
+// GetMergedAgentField returns the resolved (merged) value for an agent field,
+// honoring per-field precedence (JSON > project md > global md). It is the
+// display-side companion to SetAgentField: writes still go through
+// SetAgentField (JSON only). For a markdown-only agent this returns the md
+// value, so the TUI can show the agent's actual model instead of "(none)".
+// ---------------------------------------------------------------------------
+
+// TestGetMergedAgentField_ReturnsMdValueWhenNoJSON verifies that for an agent
+// that exists only in markdown (MdOnly=true), GetMergedAgentField returns the
+// markdown frontmatter value. The pure-JSON GetAgentField returns (nil,false)
+// for the same agent — the merge layer is what surfaces the md value.
+func TestGetMergedAgentField_ReturnsMdValueWhenNoJSON(t *testing.T) {
+	home := t.TempDir()
+	setHomeEnv(t, home)
+	writeGlobalMD(t, home, "review.md",
+		"---\nmode: subagent\nmodel: anthropic/claude-3-opus\n---\nReview body.\n")
+
+	cfg := &Config{data: map[string]interface{}{}} // no JSON agents
+
+	// Pure-JSON reader: no inline-JSON entry, so absent.
+	v, ok := cfg.GetAgentField("review", "model")
+	assert.False(t, ok, "GetAgentField reads JSON only — must be absent")
+	assert.Nil(t, v)
+
+	// Merged reader: surfaces the md value.
+	got, ok := cfg.GetMergedAgentField("review", "model")
+	require.True(t, ok, "GetMergedAgentField MUST return the md model value")
+	assert.Equal(t, "anthropic/claude-3-opus", got)
+}
+
+// TestGetMergedAgentField_JSONOverridesMd verifies that when both JSON and md
+// define a field, the JSON value wins (per-field precedence), so the user's
+// inline-JSON override is reflected in the merged display.
+func TestGetMergedAgentField_JSONOverridesMd(t *testing.T) {
+	home := t.TempDir()
+	setHomeEnv(t, home)
+	writeGlobalMD(t, home, "review.md",
+		"---\nmode: subagent\nmodel: md-original\n---\nBody.\n")
+
+	cfg := &Config{data: map[string]interface{}{
+		"agent": map[string]interface{}{
+			"review": map[string]interface{}{
+				"model": "json-override",
+			},
+		},
+	}}
+
+	got, ok := cfg.GetMergedAgentField("review", "model")
+	require.True(t, ok, "merged reader MUST report the field when JSON overrides md")
+	assert.Equal(t, "json-override", got,
+		"JSON value MUST win over md per per-field precedence")
+}
+
+// TestGetMergedAgentField_MdOnlyReflectsJSONAfterSet verifies the merge is
+// live with respect to SetAgentField: after a model-only SetAgentField on a
+// previously md-only agent, GetMergedAgentField reflects the override AND the
+// merge layer marks the agent as no longer MdOnly. This is the contract that
+// lets the TUI drop the [MD] badge once a JSON override exists.
+func TestGetMergedAgentField_MdOnlyReflectsJSONAfterSet(t *testing.T) {
+	home := t.TempDir()
+	setHomeEnv(t, home)
+	writeGlobalMD(t, home, "review.md",
+		"---\nmode: subagent\nmodel: md-original\n---\nBody.\n")
+
+	cfg := &Config{data: map[string]interface{}{}}
+
+	// Initially md-only.
+	merged := cfg.MergedAgents()
+	require.True(t, merged["review"].MdOnly, "precondition: review starts md-only")
+
+	// SetAgentField writes a model-only JSON override — the per-field merge
+	// then treats the agent as JSON-backed for that field while the rest of
+	// the agent (mode, body) still comes from md.
+	require.NoError(t, cfg.SetAgentField("review", "model", "json-model"))
+
+	got, ok := cfg.GetMergedAgentField("review", "model")
+	require.True(t, ok)
+	assert.Equal(t, "json-model", got,
+		"merged model MUST reflect the model-only JSON override")
+
+	merged = cfg.MergedAgents()
+	assert.False(t, merged["review"].MdOnly,
+		"once a JSON override exists, the agent MUST NOT be flagged MdOnly")
+	assert.True(t, merged["review"].HasInlineJSON,
+		"agent MUST be flagged HasInlineJSON once any JSON override exists")
+	// Other fields still come from md (per-field merge, not whole-agent replace).
+	assert.Equal(t, "subagent", merged["review"].Mode(),
+		"non-overridden fields MUST still come from md (per-field merge)")
+}
+
+// TestGetMergedAgentField_EmptyIsTreatedAsAbsent verifies that an empty-string
+// value is treated as absent by the merged reader (consistent with pickField's
+// emptiness rule). This protects the display path from showing "" as a real
+// value when a user clears a field via JSON.
+func TestGetMergedAgentField_EmptyIsTreatedAsAbsent(t *testing.T) {
+	home := t.TempDir()
+	setHomeEnv(t, home)
+	writeGlobalMD(t, home, "empty.md",
+		"---\nmode: subagent\nmodel: \"\"\n---\nBody.\n")
+
+	cfg := &Config{data: map[string]interface{}{}}
+
+	got, ok := cfg.GetMergedAgentField("empty", "model")
+	assert.False(t, ok, "empty-string model MUST be treated as absent")
+	assert.Nil(t, got)
+}
+
+// TestGetMergedAgentField_UnknownAgentReturnsFalse verifies the reader is
+// nil-safe for agent names that exist in neither layer.
+func TestGetMergedAgentField_UnknownAgentReturnsFalse(t *testing.T) {
+	setHomeEnv(t, t.TempDir())
+	cfg := &Config{data: map[string]interface{}{}}
+
+	got, ok := cfg.GetMergedAgentField("nope", "model")
+	assert.False(t, ok)
+	assert.Nil(t, got)
+}
+
+// ---------------------------------------------------------------------------
+// Model-only persistence and effective-resolution facade (T05)
+// ---------------------------------------------------------------------------
+
+func TestModelFacade_GlobalModelSetAndRead(t *testing.T) {
+	cfg := &Config{data: map[string]interface{}{"theme": "dark"}}
+
+	cfg.SetGlobalModel("openai/gpt-5")
+	model, ok := cfg.GetGlobalModel()
+
+	require.True(t, ok)
+	assert.Equal(t, "openai/gpt-5", model)
+	assert.Equal(t, "dark", cfg.data["theme"], "unrelated top-level JSON must survive")
+}
+
+func TestModelFacade_AgentModelOverrideSetAndRead(t *testing.T) {
+	cfg := &Config{data: map[string]interface{}{
+		"agent": map[string]interface{}{
+			"review": map[string]interface{}{"mode": "subagent", "temperature": 0.2},
+		},
+	}}
+
+	require.NoError(t, cfg.SetAgentModelOverride("review", "anthropic/claude-sonnet-4"))
+	model, ok := cfg.GetAgentModelOverride("review")
+
+	require.True(t, ok)
+	assert.Equal(t, "anthropic/claude-sonnet-4", model)
+	agent := cfg.data["agent"].(map[string]interface{})["review"].(map[string]interface{})
+	assert.Equal(t, "subagent", agent["mode"])
+	assert.Equal(t, 0.2, agent["temperature"])
+}
+
+func TestModelFacade_EffectiveModelPrecedenceAndProvenance(t *testing.T) {
+	home := t.TempDir()
+	setHomeEnv(t, home)
+	writeGlobalMD(t, home, "review.md", "---\nmodel: global-md\n---\nGlobal.\n")
+
+	projectRoot := t.TempDir()
+	projectAgents := filepath.Join(projectRoot, ".opencode", "agents")
+	require.NoError(t, os.MkdirAll(projectAgents, 0o755))
+	projectPath := filepath.Join(projectAgents, "review.md")
+	require.NoError(t, os.WriteFile(projectPath, []byte("---\nmodel: project-md\n---\nProject.\n"), 0o644))
+	oldWD, err := os.Getwd()
+	require.NoError(t, err)
+	require.NoError(t, os.Chdir(projectRoot))
+	t.Cleanup(func() { require.NoError(t, os.Chdir(oldWD)) })
+
+	tests := []struct {
+		name       string
+		data       map[string]interface{}
+		wantModel  string
+		wantSource ModelProvenance
+	}{
+		{
+			name: "inline JSON wins",
+			data: map[string]interface{}{
+				"model": "global-json",
+				"agent": map[string]interface{}{"review": map[string]interface{}{"model": "inline-json"}},
+			},
+			wantModel: "inline-json", wantSource: ModelProvenanceInlineJSON,
+		},
+		{
+			name:      "project markdown wins global markdown",
+			data:      map[string]interface{}{"model": "global-json"},
+			wantModel: "project-md", wantSource: ModelProvenanceProjectMarkdown,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := &Config{data: tt.data}
+			model, source, ok := cfg.ResolveEffectiveModel("review")
+			require.True(t, ok)
+			assert.Equal(t, tt.wantModel, model)
+			assert.Equal(t, tt.wantSource, source)
+		})
+	}
+
+	require.NoError(t, os.Remove(projectPath))
+	cfg := &Config{data: map[string]interface{}{"model": "global-json"}}
+	model, source, ok := cfg.ResolveEffectiveModel("review")
+	require.True(t, ok)
+	assert.Equal(t, "global-md", model)
+	assert.Equal(t, ModelProvenanceGlobalMarkdown, source)
+
+	require.NoError(t, os.Remove(filepath.Join(home, ".config", "opencode", "agents", "review.md")))
+	model, source, ok = cfg.ResolveEffectiveModel("review")
+	require.True(t, ok)
+	assert.Equal(t, "global-json", model)
+	assert.Equal(t, ModelProvenanceGlobalTopLevel, source)
+
+	delete(cfg.data, "model")
+	model, source, ok = cfg.ResolveEffectiveModel("review")
+	assert.False(t, ok)
+	assert.Empty(t, model)
+	assert.Equal(t, ModelProvenanceNone, source)
+}
+
+func TestModelFacade_SavePreservesUnrelatedJSONAndMarkdownBytes(t *testing.T) {
+	home := t.TempDir()
+	setHomeEnv(t, home)
+	mdBytes := []byte("---\nmodel: md-model\ntemperature: 0.1\n---\nDo not rewrite.\n")
+	mdPath := writeGlobalMD(t, home, "review.md", string(mdBytes))
+	configPath := filepath.Join(t.TempDir(), "opencode.json")
+	cfg := &Config{path: configPath, data: map[string]interface{}{
+		"model": "old-global",
+		"mcp":   map[string]interface{}{"server": map[string]interface{}{"url": "https://example.invalid"}},
+		"agent": map[string]interface{}{
+			"review": map[string]interface{}{"mode": "subagent", "temperature": 0.4},
+		},
+	}}
+
+	cfg.SetGlobalModel("new-global")
+	require.NoError(t, cfg.SetAgentModelOverride("review", "new-agent"))
+	require.NoError(t, cfg.Save())
+
+	reloaded, err := LoadConfig(configPath)
+	require.NoError(t, err)
+	assert.Equal(t, cfg.data["mcp"], reloaded.data["mcp"])
+	assert.Equal(t, "subagent", reloaded.data["agent"].(map[string]interface{})["review"].(map[string]interface{})["mode"])
+	assert.Equal(t, 0.4, reloaded.data["agent"].(map[string]interface{})["review"].(map[string]interface{})["temperature"])
+	gotMD, err := os.ReadFile(mdPath)
+	require.NoError(t, err)
+	assert.Equal(t, mdBytes, gotMD, "model facade must never rewrite markdown")
+}
+
+// ---------------------------------------------------------------------------
+// Independent Model / Variant / Options Selection Contract (mem-001)
+// ---------------------------------------------------------------------------
+
+func TestModelVariant_IndependentAgentFieldAccess(t *testing.T) {
+	cfg, err := LoadConfig(fixturePath(t, "model_variant.json"))
+	require.NoError(t, err)
+
+	// Planner has model, variant, and options
+	modelVal, ok := cfg.GetAgentField("planner", "model")
+	require.True(t, ok)
+	assert.Equal(t, "openai/gpt-4o", modelVal)
+
+	varVal, ok := cfg.GetAgentField("planner", "variant")
+	require.True(t, ok)
+	assert.Equal(t, "high", varVal)
+
+	optVal, ok := cfg.GetAgentField("planner", "options")
+	require.True(t, ok)
+	optMap, ok := optVal.(map[string]interface{})
+	require.True(t, ok)
+	assert.Equal(t, "high", optMap["effort"])
+
+	// Reviewer has model only (no variant, no options)
+	modelVal, ok = cfg.GetAgentField("reviewer", "model")
+	require.True(t, ok)
+	assert.Equal(t, "anthropic/claude-sonnet-4-20250514", modelVal)
+	_, ok = cfg.GetAgentField("reviewer", "variant")
+	assert.False(t, ok, "reviewer must have no variant field")
+	_, ok = cfg.GetAgentField("reviewer", "options")
+	assert.False(t, ok, "reviewer must have no options field")
+
+	// Explorer has variant only (inherits global model)
+	_, ok = cfg.GetAgentField("explorer", "model")
+	assert.False(t, ok, "explorer has no inline model field")
+	varVal, ok = cfg.GetAgentField("explorer", "variant")
+	require.True(t, ok)
+	assert.Equal(t, "low", varVal)
+
+	// General has options only
+	_, ok = cfg.GetAgentField("general", "model")
+	assert.False(t, ok)
+	_, ok = cfg.GetAgentField("general", "variant")
+	assert.False(t, ok)
+	optVal, ok = cfg.GetAgentField("general", "options")
+	require.True(t, ok)
+	optMap, ok = optVal.(map[string]interface{})
+	require.True(t, ok)
+	assert.Equal(t, float64(3), optMap["search_depth"])
+}
+
+func TestModelVariant_IndependentFieldMutation(t *testing.T) {
+	cfg := &Config{data: map[string]interface{}{
+		"agent": map[string]interface{}{
+			"worker": map[string]interface{}{
+				"mode":    "subagent",
+				"model":   "openai/gpt-4o",
+				"variant": "high",
+				"options": map[string]interface{}{"effort": "high"},
+			},
+		},
+	}}
+
+	// 1. Mutating variant does not touch model or options
+	require.NoError(t, cfg.SetAgentField("worker", "variant", "medium"))
+	modelVal, _ := cfg.GetAgentField("worker", "model")
+	varVal, _ := cfg.GetAgentField("worker", "variant")
+	optVal, _ := cfg.GetAgentField("worker", "options")
+	assert.Equal(t, "openai/gpt-4o", modelVal, "model must remain unchanged")
+	assert.Equal(t, "medium", varVal, "variant must be updated")
+	assert.Equal(t, map[string]interface{}{"effort": "high"}, optVal, "options must remain unchanged")
+
+	// 2. Mutating model does not touch variant or options
+	require.NoError(t, cfg.SetAgentField("worker", "model", "anthropic/claude-sonnet-4-20250514"))
+	modelVal, _ = cfg.GetAgentField("worker", "model")
+	varVal, _ = cfg.GetAgentField("worker", "variant")
+	assert.Equal(t, "anthropic/claude-sonnet-4-20250514", modelVal, "model must be updated")
+	assert.Equal(t, "medium", varVal, "variant must remain unchanged")
+
+	// 3. Ensure no model suffix conflation (never string-concatenate variant into model)
+	assert.NotContains(t, modelVal.(string), ":medium", "model must not conflate variant as suffix")
+	assert.NotContains(t, modelVal.(string), ":high", "model must not conflate variant as suffix")
+
+	// 4. Ensure no invented top-level global reasoningEffort key
+	assert.NotContains(t, cfg.data, "reasoningEffort", "no global reasoningEffort key")
+}
+
+func TestModelVariant_DisabledAgentProtection(t *testing.T) {
+	cfg, err := LoadConfig(fixturePath(t, "model_variant.json"))
+	require.NoError(t, err)
+
+	// Disabled agent must reject field changes for model, variant, and options
+	assert.True(t, cfg.IsAgentDisabled("build"))
+	require.Error(t, cfg.SetAgentField("build", "model", "openai/gpt-5"))
+	require.Error(t, cfg.SetAgentField("build", "variant", "turbo"))
+	require.Error(t, cfg.SetAgentField("build", "options", map[string]interface{}{"key": "val"}))
+}
+
+func TestModelVariant_ExplicitClearVsAbsent(t *testing.T) {
+	cfg := &Config{data: map[string]interface{}{
+		"agent": map[string]interface{}{
+			"agent-absent": map[string]interface{}{"mode": "subagent"},
+			"agent-cleared": map[string]interface{}{
+				"mode":    "subagent",
+				"model":   "",
+				"variant": "",
+			},
+		},
+	}}
+
+	// Absent field: GetAgentField returns false
+	_, ok := cfg.GetAgentField("agent-absent", "model")
+	assert.False(t, ok, "absent model returns false")
+	_, ok = cfg.GetAgentField("agent-absent", "variant")
+	assert.False(t, ok, "absent variant returns false")
+
+	// Cleared (explicit empty string) field: GetAgentField returns true with ""
+	v, ok := cfg.GetAgentField("agent-cleared", "model")
+	assert.True(t, ok, "explicit empty string key exists in map")
+	assert.Equal(t, "", v)
+
+	v, ok = cfg.GetAgentField("agent-cleared", "variant")
+	assert.True(t, ok, "explicit empty string key exists in map")
+	assert.Equal(t, "", v)
+
+	// GetAgentModelOverride filters out empty strings
+	_, ok = cfg.GetAgentModelOverride("agent-absent")
+	assert.False(t, ok)
+	_, ok = cfg.GetAgentModelOverride("agent-cleared")
+	assert.False(t, ok, "empty string model override is treated as non-overridden")
 }

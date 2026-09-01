@@ -9,10 +9,12 @@
 package tui
 
 import (
+	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -23,8 +25,15 @@ import (
 // fixtureConfig loads the sanitized opencode.json fixture from the repo's
 // test/fixtures directory. The fixture contains 14 agents (3 system, 2 primary,
 // 9 subagents), with `build` disabled and `parallel-dispatch` hidden.
+//
+// It isolates $HOME (HOME + USERPROFILE) to an empty temp dir so the host's
+// global markdown agents do not leak into GetAgents (markdown discovery is
+// HOME-based); TUI tests that DO want markdown fixtures set up their own HOME.
 func fixtureConfig(t *testing.T) *config.Config {
 	t.Helper()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 	p := filepath.Join("..", "..", "test", "fixtures", "opencode.json")
 	abs, err := filepath.Abs(p)
 	require.NoError(t, err, "failed to resolve fixture path")
@@ -96,17 +105,6 @@ func TestNewModel_NilModelsDoesNotPanic(t *testing.T) {
 	})
 }
 
-// TestNewModel_EditableFields verifies the 6-field schema used by the Agent
-// Detail screen.
-//
-// Spec: REQ-TUI-004 — Happy path — show 6 editable fields.
-func TestNewModel_EditableFields(t *testing.T) {
-	m := NewModel(fixtureConfig(t), sampleGrouped(), 5)
-	expected := []string{"model", "temperature", "top_p", "color", "steps", "disable"}
-	assert.Equal(t, expected, m.editableFields,
-		"editableFields must be the 6 fields shown on the Agent Detail screen, in this order")
-}
-
 // TestNewModel_AgentListsPopulatedFromConfig verifies that primaryAgents,
 // subagents, and disabledAgents are seeded from the loaded config.
 //
@@ -162,15 +160,11 @@ func TestNewModel_DefaultCursorZero(t *testing.T) {
 	assert.False(t, m.dirty, "freshly constructed model must not be dirty")
 }
 
-// TestNewModel_TextInputsInitialized verifies that the bubbles/textinput
-// sub-components are usable (not zero-value) so subsequent screen handlers
-// can call Update on them without panicking.
-func TestNewModel_TextInputsInitialized(t *testing.T) {
+// TestNewModel_FilterInputInitialized verifies that the model picker input is
+// usable by subsequent screen handlers.
+func TestNewModel_FilterInputInitialized(t *testing.T) {
 	m := NewModel(fixtureConfig(t), sampleGrouped(), 5)
-	// A zero-value textinput.Model would panic on Update; calling Value()
-	// on a New()'d model returns an empty string safely.
 	assert.Equal(t, "", m.filterInput.Value())
-	assert.Equal(t, "", m.fieldInput.Value())
 }
 
 // ---------------------------------------------------------------------------
@@ -194,7 +188,7 @@ func TestInit_DoesNotPanic(t *testing.T) {
 // command regardless of the current screen.
 func TestUpdate_CtrlC_Quits(t *testing.T) {
 	m := NewModel(fixtureConfig(t), sampleGrouped(), 5)
-	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
+	_, cmd := m.Update(tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl})
 	require.NotNil(t, cmd, "Ctrl+C MUST produce a non-nil command")
 	assert.IsType(t, tea.QuitMsg{}, cmd(), "Ctrl+C MUST produce a tea.QuitMsg")
 }
@@ -208,7 +202,7 @@ func TestUpdate_CtrlC_DirtyOnAgentList_ShowsConfirmation(t *testing.T) {
 	m := NewModel(fixtureConfig(t), sampleGrouped(), 5)
 	m.dirty = true
 
-	newM, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
+	newM, cmd := m.Update(tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl})
 	result := newM.(Model)
 	assert.True(t, result.quitConfirm,
 		"Ctrl+C on AgentList with dirty MUST set quitConfirm, not quit")
@@ -221,7 +215,7 @@ func TestUpdate_CtrlC_DirtyOnAgentList_ShowsConfirmation(t *testing.T) {
 // the core dispatcher 'q' simply quits.
 func TestUpdate_Q_Quits(t *testing.T) {
 	m := NewModel(fixtureConfig(t), sampleGrouped(), 5)
-	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'q'}})
+	_, cmd := m.Update(tea.KeyPressMsg{Text: "q"})
 	require.NotNil(t, cmd, "'q' MUST produce a non-nil command")
 	assert.IsType(t, tea.QuitMsg{}, cmd(), "'q' MUST produce a tea.QuitMsg")
 }
@@ -233,10 +227,10 @@ func TestUpdate_Q_Quits(t *testing.T) {
 func TestUpdate_ESC_PopsToPreviousState(t *testing.T) {
 	m := NewModel(fixtureConfig(t), sampleGrouped(), 5)
 	// Simulate being on a sub-screen entered from AgentList.
-	m.state = ScreenAgentDetail
+	m.state = ScreenModelSelection
 	m.navigationStack = []appState{ScreenAgentList}
 
-	newM, _ := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	newM, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyEsc})
 	result, ok := newM.(Model)
 	require.True(t, ok, "Update must return the same Model type")
 	assert.Equal(t, ScreenAgentList, result.state,
@@ -247,7 +241,7 @@ func TestUpdate_ESC_PopsToPreviousState(t *testing.T) {
 // screen quits without mutating the root state.
 func TestUpdate_ESC_FromAgentList_StaysAtRoot(t *testing.T) {
 	m := NewModel(fixtureConfig(t), sampleGrouped(), 5)
-	newM, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	newM, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEsc})
 	result := newM.(Model)
 	assert.Equal(t, ScreenAgentList, result.state,
 		"ESC on the root screen must stay on the root screen")
@@ -263,7 +257,7 @@ func TestUpdate_S_NotDirty_StaysOnScreen(t *testing.T) {
 	m := NewModel(fixtureConfig(t), sampleGrouped(), 5)
 	require.False(t, m.dirty, "precondition: model must not be dirty")
 
-	newM, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}})
+	newM, _ := m.Update(tea.KeyPressMsg{Text: "s"})
 	result := newM.(Model)
 	assert.Equal(t, ScreenAgentList, result.state,
 		"'s' with no dirty state must NOT transition to ScreenSaveConfirm")
@@ -278,7 +272,7 @@ func TestUpdate_S_Dirty_TransitionsToSaveConfirm(t *testing.T) {
 	m := NewModel(fixtureConfig(t), sampleGrouped(), 5)
 	m.dirty = true
 
-	newM, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}})
+	newM, _ := m.Update(tea.KeyPressMsg{Text: "s"})
 	result := newM.(Model)
 	assert.Equal(t, ScreenSaveConfirm, result.state,
 		"'s' with dirty state MUST transition to ScreenSaveConfirm")
@@ -291,7 +285,7 @@ func TestUpdate_S_Dirty_TransitionsToSaveConfirm(t *testing.T) {
 // will handle j/k/enter/etc.
 func TestUpdate_OtherKey_NoOp(t *testing.T) {
 	m := NewModel(fixtureConfig(t), sampleGrouped(), 5)
-	newM, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
+	newM, _ := m.Update(tea.KeyPressMsg{Text: "x"})
 	result := newM.(Model)
 	assert.Equal(t, ScreenAgentList, result.state,
 		"unmapped keys must not change state at the core dispatcher")
@@ -319,15 +313,14 @@ func TestView_AllStatesReturnNonEmpty(t *testing.T) {
 	cfg := fixtureConfig(t)
 	states := []appState{
 		ScreenAgentList,
-		ScreenAgentDetail,
 		ScreenModelSelection,
-		ScreenFieldInput,
 		ScreenSaveConfirm,
+		ScreenAgentMultiSelect,
 	}
 	for _, st := range states {
 		m := NewModel(cfg, sampleGrouped(), 5)
 		m.state = st
-		out := m.View()
+		out := m.View().Content
 		assert.NotEmpty(t, out, "state %d MUST render a non-empty placeholder", st)
 	}
 }
@@ -337,97 +330,63 @@ func TestView_AllStatesReturnNonEmpty(t *testing.T) {
 func TestView_NilConfigDoesNotPanic(t *testing.T) {
 	m := NewModel(nil, sampleGrouped(), 5)
 	require.NotPanics(t, func() {
-		out := m.View()
+		out := m.View().Content
 		assert.NotEmpty(t, out)
 	})
 }
 
-func TestUpdate_NestedPickerEscReturnsDetailThenAgentList(t *testing.T) {
+func TestUpdate_DirectPickerEscReturnsAgentList(t *testing.T) {
 	m := NewModel(fixtureConfig(t), richGrouped(), 5)
 	items := selectableItems(m)
 	m.agentCursor = indexOf(items, "code-reviewer")
 
-	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
-	m = updated.(Model)
-	require.Equal(t, ScreenAgentDetail, m.state)
-
-	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	updated, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = updated.(Model)
 	require.Equal(t, ScreenModelSelection, m.state)
 
-	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
-	m = updated.(Model)
-	assert.Equal(t, ScreenAgentDetail, m.state)
-
-	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	updated, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEsc})
 	m = updated.(Model)
 	assert.Equal(t, ScreenAgentList, m.state)
 }
 
-func TestUpdate_NestedFieldInputEscReturnsDetailThenAgentList(t *testing.T) {
+func TestUpdate_AgentActivationNeverReachesNonModelEditors(t *testing.T) {
 	m := NewModel(fixtureConfig(t), sampleGrouped(), 5)
 	items := selectableItems(m)
 	m.agentCursor = indexOf(items, "code-reviewer")
 
-	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	updated, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = updated.(Model)
-	require.Equal(t, ScreenAgentDetail, m.state)
-	m.detailCursor = 1
-
-	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
-	m = updated.(Model)
-	require.Equal(t, ScreenFieldInput, m.state)
-
-	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
-	m = updated.(Model)
-	assert.Equal(t, ScreenAgentDetail, m.state)
-
-	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
-	m = updated.(Model)
-	assert.Equal(t, ScreenAgentList, m.state)
+	assert.Equal(t, ScreenModelSelection, m.state)
 }
 
 func TestUpdate_SaveConfirmRepeatedSDoesNotCorruptCancelTarget(t *testing.T) {
 	m := NewModel(fixtureConfig(t), sampleGrouped(), 5)
-	m.state = ScreenAgentDetail
-	m.navigationStack = []appState{ScreenAgentList}
+	m.state = ScreenAgentList
 	m.dirty = true
 
-	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}})
+	updated, _ := m.Update(tea.KeyPressMsg{Text: "s"})
 	m = updated.(Model)
 	require.Equal(t, ScreenSaveConfirm, m.state)
 
-	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}})
+	updated, _ = m.Update(tea.KeyPressMsg{Text: "s"})
 	m = updated.(Model)
 	require.Equal(t, ScreenSaveConfirm, m.state)
 
-	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	updated, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEsc})
 	m = updated.(Model)
-	assert.Equal(t, ScreenAgentDetail, m.state)
+	assert.Equal(t, ScreenAgentList, m.state)
 }
 
 func TestModelPicker_PrintableQsjkReachFilterInput(t *testing.T) {
 	m := newModelSelectModel(t, "global", "")
 
 	for _, r := range []rune{'q', 's', 'j', 'k'} {
-		updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+		updated, _ := m.Update(tea.KeyPressMsg{Text: string(r)})
 		m = updated.(Model)
 	}
 
 	assert.Equal(t, ScreenModelSelection, m.state)
 	assert.Equal(t, "qsjk", m.filterInput.Value())
-}
-
-func TestFieldInput_PrintableQsReachTextInput(t *testing.T) {
-	m := newFieldInputModel(t, "code-reviewer", "color")
-
-	for _, r := range []rune{'q', 's'} {
-		updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
-		m = updated.(Model)
-	}
-
-	assert.Equal(t, ScreenFieldInput, m.state)
-	assert.Equal(t, "qs", m.fieldInput.Value())
 }
 
 func TestAgentList_CursorRestoredAfterModelPicker(t *testing.T) {
@@ -436,13 +395,13 @@ func TestAgentList_CursorRestoredAfterModelPicker(t *testing.T) {
 	wantCursor := indexOf(items, "code-reviewer")
 	m.agentCursor = wantCursor
 
-	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	updated, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = updated.(Model)
-	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	updated, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = updated.(Model)
-	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	updated, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEsc})
 	m = updated.(Model)
-	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	updated, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEsc})
 	m = updated.(Model)
 
 	assert.Equal(t, ScreenAgentList, m.state)
@@ -455,20 +414,16 @@ func TestModelPicker_CursorIndependentFromAgentListCursor(t *testing.T) {
 	wantAgentCursor := indexOf(items, "code-reviewer")
 	m.agentCursor = wantAgentCursor
 
-	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
-	m = updated.(Model)
-	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	updated, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = updated.(Model)
 	require.Equal(t, ScreenModelSelection, m.state)
 	assert.Equal(t, 0, m.modelCursor, "model picker starts at its own first result")
 
-	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyDown})
+	updated, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyDown})
 	m = updated.(Model)
 	assert.Equal(t, 1, m.modelCursor, "model picker cursor moves independently")
 
-	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
-	m = updated.(Model)
-	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	updated, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEsc})
 	m = updated.(Model)
 	assert.Equal(t, wantAgentCursor, m.agentCursor)
 }
@@ -545,6 +500,32 @@ func TestPopScreen_ClearsBulkListSentinel(t *testing.T) {
 		"popScreen from bulk-list MUST clear bulkTargets")
 }
 
+func TestPopScreen_FromVariantSelection_PreservesBulkState(t *testing.T) {
+	m := NewModel(fixtureConfig(t), sampleGrouped(), 5)
+	m.state = ScreenVariantSelection
+	m.fieldEditing = fieldEditingBulkList
+	m.bulkTargets = []string{"agent-a", "agent-b"}
+	m.pendingSelectedModel = opencode.Model{FullName: "test/model"}
+	m.availableVariants = []opencode.VariantDescriptor{{Name: "var1"}}
+	m.variantCursor = 1
+	m.navigationStack = []appState{ScreenAgentList, ScreenModelSelection}
+
+	m.popScreen()
+
+	assert.Equal(t, ScreenModelSelection, m.state, "popScreen from variant selection must return to model selection")
+	assert.Equal(t, fieldEditingBulkList, m.fieldEditing, "popScreen from variant selection must preserve bulk-list fieldEditing")
+	assert.Equal(t, []string{"agent-a", "agent-b"}, m.bulkTargets, "popScreen from variant selection must preserve bulkTargets")
+	assert.Empty(t, m.pendingSelectedModel.FullName, "pendingSelectedModel must be cleared")
+	assert.Nil(t, m.availableVariants, "availableVariants must be cleared")
+	assert.Zero(t, m.variantCursor, "variantCursor must be reset to 0")
+
+	// Now popping from model selection clears bulk state
+	m.popScreen()
+	assert.Equal(t, ScreenAgentList, m.state)
+	assert.Equal(t, "", m.fieldEditing)
+	assert.Nil(t, m.bulkTargets)
+}
+
 // TestPopScreen_PreservesGlobalSentinel is a regression guard: the "global"
 // sentinel MUST NOT be cleared by popScreen. Only bulk-* sentinels are cleaned.
 //
@@ -610,4 +591,296 @@ func TestSingleAgentFlowAfterBulkCancel(t *testing.T) {
 		"fieldEditing MUST NOT retain stale bulk-list after cancel")
 	assert.Equal(t, "plan", m.fieldEditing,
 		"fieldEditing MUST be the agent name for single-agent edit")
+}
+
+// ---------------------------------------------------------------------------
+// Markdown agent integration (T-B6, T-B7)
+//
+// The TUI consumes cfg.GetAgents() which includes merged markdown agents.
+// Markdown-backed agents are now EDITABLE in v2: ENTER opens the Agent Detail
+// model picker for them, and edits persist as inline-JSON model overrides — the
+// .md file is never touched.
+// The merged display reader (GetMergedAgentField) lets the TUI show the
+// agent's actual md model instead of "(none)" before any override exists.
+// ---------------------------------------------------------------------------
+
+// loadFixtureWithMD loads the JSON fixture config while pointing $HOME at a
+// temp dir whose ~/.config/opencode/agents/ contains the supplied .md files.
+// files maps file name -> content. The fixture's own JSON agents are unchanged.
+func loadFixtureWithMD(t *testing.T, files map[string]string) *config.Config {
+	t.Helper()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	if len(files) > 0 {
+		gdir := filepath.Join(home, ".config", "opencode", "agents")
+		require.NoError(t, os.MkdirAll(gdir, 0o755))
+		for name, content := range files {
+			require.NoError(t, os.WriteFile(filepath.Join(gdir, name), []byte(content), 0o644))
+		}
+	}
+	abs, err := filepath.Abs(filepath.Join("..", "..", "test", "fixtures", "opencode.json"))
+	require.NoError(t, err)
+	cfg, err := config.LoadConfig(abs)
+	require.NoError(t, err)
+	return cfg
+}
+
+// TestTUI_ShowsMDAgents verifies that markdown agents appear in the TUI agent
+// lists (consumed from cfg.GetAgents) and are flagged md-only.
+func TestTUI_ShowsMDAgents(t *testing.T) {
+	cfg := loadFixtureWithMD(t, map[string]string{
+		"mdshown.md": "---\nmode: subagent\nmodel: m1\n---\nBody.\n",
+	})
+
+	m := NewModel(cfg, sampleGrouped(), 5)
+	assert.Contains(t, m.subagents, "mdshown",
+		"markdown agent must appear in the TUI subagent list")
+	assert.True(t, m.IsMarkdownOnly("mdshown"),
+		"md-only agent (no inline-JSON backing) must be flagged")
+	assert.False(t, m.IsMarkdownOnly("code-reviewer"),
+		"a JSON-backed agent must NOT be flagged md-only")
+}
+
+// TestTUI_MarkdownBackedAgentIsEditable verifies that pressing ENTER on an
+// md-backed agent opens model selection. Edits persist as inline-JSON
+// overrides (agent.<name>.<field>); the .md file is never written. This was
+// previously gated off (read-only v1); the gate is removed in T-B7 because
+// OpenCode treats agent.<name> as a per-field overlay on the md agent, so a
+// model-only JSON entry overrides the model without shadowing the prompt.
+//
+// Spec: REQ-TUI-003 — ENTER on an agent (any agent) opens AgentDetail.
+func TestTUI_MarkdownBackedAgentIsEditable(t *testing.T) {
+	cfg := loadFixtureWithMD(t, map[string]string{
+		"editable.md": "---\nmode: primary\nmodel: m\n---\nBody.\n",
+	})
+
+	m := NewModel(cfg, sampleGrouped(), 5)
+	items := selectableItems(m)
+	cursor := indexOf(items, "editable")
+	require.GreaterOrEqual(t, cursor, 0,
+		"md-backed agent 'editable' must be selectable in the list")
+	m.agentCursor = cursor
+
+	updated, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	result := updated.(Model)
+	assert.Equal(t, ScreenModelSelection, result.state,
+		"ENTER on an md-backed agent MUST open model selection")
+	assert.Equal(t, "editable", result.selectedAgent,
+		"selectedAgent MUST be the md-backed agent at the cursor")
+
+	// Sanity: a JSON-backed agent still opens the editor on ENTER.
+	m2 := NewModel(cfg, sampleGrouped(), 5)
+	items2 := selectableItems(m2)
+	cursor2 := indexOf(items2, "code-reviewer")
+	require.GreaterOrEqual(t, cursor2, 0)
+	m2.agentCursor = cursor2
+	updated2, _ := m2.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	result2 := updated2.(Model)
+	assert.Equal(t, ScreenModelSelection, result2.state,
+		"ENTER on a JSON-backed agent must still open model selection")
+}
+
+// TestTUI_MarkdownAgentShowsMergedModel verifies that a md-backed agent's
+// detail and list rows show its actual markdown model (via the merged reader),
+// NOT "(none)". This is the display-side fix that complements the edit-gate
+// removal: before any override exists, the user must see what they would be
+// overriding.
+func TestTUI_MarkdownAgentShowsMergedModel(t *testing.T) {
+	cfg := loadFixtureWithMD(t, map[string]string{
+		"rev.md": "---\nmode: subagent\nmodel: anthropic/claude-3-opus\n---\nBody.\n",
+	})
+
+	// List row shows the merged model, not "(none)" next to the agent name.
+	listOut := viewAgentList(NewModel(cfg, sampleGrouped(), 5))
+	assert.Contains(t, listOut, "anthropic/claude-3-opus",
+		"agent list row MUST show the merged md model for an md-backed agent")
+}
+
+// TestTUI_MarkdownAgentBadgeDisappearsAfterJSONOverride verifies that once a
+// JSON override exists for an md-backed agent, the [MD] badge disappears from
+// the rendered list (the agent is no longer MdOnly in the merged view). This
+// requires performSave to recompute the mdOnlyAgents cache after a successful
+// save.
+func TestTUI_MarkdownAgentBadgeDisappearsAfterJSONOverride(t *testing.T) {
+	files := map[string]string{
+		"rev.md": "---\nmode: subagent\nmodel: md-orig\n---\nBody.\n",
+	}
+
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	gdir := filepath.Join(home, ".config", "opencode", "agents")
+	require.NoError(t, os.MkdirAll(gdir, 0o755))
+	for name, content := range files {
+		require.NoError(t, os.WriteFile(filepath.Join(gdir, name), []byte(content), 0o644))
+	}
+
+	// Writable JSON config in a separate temp dir.
+	cfgDir := t.TempDir()
+	cfgPath := filepath.Join(cfgDir, "opencode.json")
+	require.NoError(t, os.WriteFile(cfgPath, []byte("{}"), 0o600))
+	cfg, err := config.LoadConfig(cfgPath)
+	require.NoError(t, err)
+
+	m := NewModel(cfg, sampleGrouped(), 0)
+
+	// Before override: [MD] badge is shown for rev.
+	assert.True(t, m.IsMarkdownOnly("rev"),
+		"precondition: rev starts as md-only")
+	listBefore := viewAgentList(m)
+	assert.Contains(t, listBefore, "[MD]",
+		"[MD] badge MUST be shown while no JSON override exists")
+
+	// Simulate the user setting a model override via the editor flow.
+	require.NoError(t, m.config.SetAgentModelOverride("rev", "json-model"))
+	m.RecordModelChange("rev", "md-orig", "json-model")
+	m.dirty = true
+	m.state = ScreenSaveConfirm
+	m.navigationStack = []appState{ScreenAgentList}
+
+	updated, _ := performSave(m)
+	m = updated
+
+	// After Save: badge disappears because mdOnlyAgents was recomputed.
+	assert.False(t, m.IsMarkdownOnly("rev"),
+		"after a JSON override is saved, rev MUST NOT be flagged md-only")
+	listAfter := viewAgentList(m)
+	assert.NotContains(t, listAfter, "[MD]",
+		"[MD] badge MUST disappear once a JSON override exists")
+
+	// And the merged model reflected is the override.
+	val, ok := m.config.GetMergedAgentField("rev", "model")
+	require.True(t, ok)
+	assert.Equal(t, "json-model", val)
+}
+
+// TestTUI_EditingMarkdownAgentPersistsJSONOnly verifies the end-to-end editing
+// flow: selecting a model on a md-backed agent writes ONLY an inline-JSON
+// agent.<name>.model entry; the .md file remains byte-identical. After reload
+// the merged model reflects the override (per-field merge over the md agent).
+func TestTUI_EditingMarkdownAgentPersistsJSONOnly(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	gdir := filepath.Join(home, ".config", "opencode", "agents")
+	require.NoError(t, os.MkdirAll(gdir, 0o755))
+	mdContent := []byte("---\nmode: subagent\nmodel: md-original\n---\nBody.\n")
+	mdPath := filepath.Join(gdir, "review.md")
+	require.NoError(t, os.WriteFile(mdPath, mdContent, 0o644))
+
+	// Writable JSON config: empty so review is purely md-backed at first.
+	cfgDir := t.TempDir()
+	cfgPath := filepath.Join(cfgDir, "opencode.json")
+	require.NoError(t, os.WriteFile(cfgPath, []byte("{}"), 0o600))
+	cfg, err := config.LoadConfig(cfgPath)
+	require.NoError(t, err)
+
+	// Verify the precondition: GetAgentField returns absent (md only).
+	_, ok := cfg.GetAgentField("review", "model")
+	assert.False(t, ok, "precondition: review has no JSON entry yet")
+
+	// Apply the same model override behavior used by the model picker.
+	require.NoError(t, cfg.SetAgentModelOverride("review", "opencode-go/glm-5.2"))
+	require.NoError(t, cfg.Save())
+
+	// 1) The .md file MUST be byte-for-byte unchanged.
+	gotMD, err := os.ReadFile(mdPath)
+	require.NoError(t, err)
+	assert.Equal(t, string(mdContent), string(gotMD),
+		"Save MUST NOT modify the markdown agent file")
+
+	// 2) The JSON config now contains an inline-JSON agent.review.model entry
+	//    and ONLY that entry (no prompt, no mode copied from md — confirming
+	//    the JSON write path stays model-only).
+	reloaded, err := config.LoadConfig(cfgPath)
+	require.NoError(t, err)
+	jsonAgent, ok := reloaded.Data()["agent"].(map[string]interface{})
+	require.True(t, ok, "agent section MUST exist in the saved JSON")
+	review, ok := jsonAgent["review"].(map[string]interface{})
+	require.True(t, ok, "agent.review object MUST exist")
+	assert.Equal(t, "opencode-go/glm-5.2", review["model"],
+		"agent.review.model MUST equal the override")
+	assert.Len(t, review, 1,
+		"agent.review MUST contain ONLY the model field (model-only JSON entry)")
+
+	// 3) The merged model after reload reflects the override, and the rest of
+	//    the agent (mode, prompt) still comes from md.
+	merged := reloaded.MergedAgents()["review"]
+	require.NotNil(t, merged)
+	assert.Equal(t, "opencode-go/glm-5.2", merged.Fields["model"],
+		"merged model MUST reflect the saved JSON override")
+	assert.Equal(t, "subagent", merged.Mode(),
+		"merged mode MUST still come from md (per-field merge)")
+	assert.Equal(t, "Body.", merged.Prompt,
+		"merged prompt MUST still come from md body (per-field merge)")
+}
+
+// ---------------------------------------------------------------------------
+// Lifecycle & Negative Assertions (REQ-TUI-PRO-001, REQ-TUI-PRO-004)
+// ---------------------------------------------------------------------------
+
+func TestModel_InitReturnsNil(t *testing.T) {
+	m := NewModel(fixtureConfig(t), sampleGrouped(), 5)
+	cmd := m.Init()
+	assert.Nil(t, cmd, "Init MUST return nil (no startup async work, no spinners, no periodic commands)")
+}
+
+func TestModel_NonFilterScreensDoNotSchedulePeriodicCommands(t *testing.T) {
+	cfg := fixtureConfig(t)
+	states := []struct {
+		name  string
+		state appState
+	}{
+		{"AgentList", ScreenAgentList},
+		{"SaveConfirm", ScreenSaveConfirm},
+		{"AgentMultiSelect", ScreenAgentMultiSelect},
+	}
+
+	for _, s := range states {
+		t.Run(s.name, func(t *testing.T) {
+			m := NewModel(cfg, sampleGrouped(), 5)
+			m.state = s.state
+			if s.state == ScreenAgentMultiSelect {
+				initAgentMultiSelectScreen(&m)
+			}
+			_, cmd := m.Update(struct{}{})
+			assert.Nil(t, cmd, "non-filter screen %s MUST NOT schedule commands on non-key messages", s.name)
+		})
+	}
+}
+
+func TestModel_Negative_NoSpinnerOnAnyScreen(t *testing.T) {
+	cfg := fixtureConfig(t)
+	states := []struct {
+		name  string
+		state appState
+	}{
+		{"AgentList", ScreenAgentList},
+		{"ModelSelection", ScreenModelSelection},
+		{"SaveConfirm", ScreenSaveConfirm},
+		{"AgentMultiSelect", ScreenAgentMultiSelect},
+	}
+
+	spinnerRunes := []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
+
+	for _, s := range states {
+		t.Run(s.name, func(t *testing.T) {
+			m := NewModel(cfg, richGrouped(), 5)
+			m.state = s.state
+			switch s.state {
+			case ScreenModelSelection:
+				initModelSelectionScreen(&m)
+			case ScreenAgentMultiSelect:
+				initAgentMultiSelectScreen(&m)
+			}
+			out := m.View().Content
+			for _, r := range spinnerRunes {
+				assert.NotContains(t, out, r, "Screen %s MUST NOT render spinner rune %q", s.name, r)
+			}
+			lower := strings.ToLower(out)
+			assert.NotContains(t, lower, "spinner")
+			assert.NotContains(t, lower, "loading...")
+		})
+	}
 }

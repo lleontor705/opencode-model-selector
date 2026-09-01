@@ -2,15 +2,18 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	tea "charm.land/bubbletea/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/lleontor705/opencode-model-selector/internal/agentcatalog"
 	"github.com/lleontor705/opencode-model-selector/internal/config"
 	"github.com/lleontor705/opencode-model-selector/internal/opencode"
 )
@@ -56,6 +59,11 @@ func TestParseFlags_ListAgents(t *testing.T) {
 
 	require.Equal(t, 0, code)
 	assert.Equal(t, modeListAgents, opts.mode)
+}
+
+func TestPrintUsage_ListAgentsDescribesModelOnlyCatalog(t *testing.T) {
+	assert.Equal(t, "List the runtime agent catalog", listAgentsHelp)
+	assert.NotContains(t, listAgentsHelp, "field values")
 }
 
 // TestParseFlags_ConfigOverride verifies that --config sets the config path
@@ -168,6 +176,24 @@ func TestRun_FlagError_ReturnsExit2(t *testing.T) {
 	assert.Equal(t, 2, code, "run should return 2 for invalid flags")
 }
 
+// TestParseFlags_HelpExits0 verifies that -h/--help is treated as a successful
+// usage request (exit 0), while an unknown flag is still a usage error (exit 2).
+// The help banner is written to stdout; genuine flag errors go to stderr.
+func TestParseFlags_HelpExits0(t *testing.T) {
+	t.Run("long --help", func(t *testing.T) {
+		_, code := parseFlags([]string{"--help"})
+		assert.Equal(t, 0, code, "--help must exit 0 (usage request, not an error)")
+	})
+	t.Run("short -h", func(t *testing.T) {
+		_, code := parseFlags([]string{"-h"})
+		assert.Equal(t, 0, code, "-h must exit 0 (usage request, not an error)")
+	})
+	t.Run("unknown flag still exits 2", func(t *testing.T) {
+		_, code := parseFlags([]string{"--no-such-flag"})
+		assert.Equal(t, 2, code, "unknown flag must remain a usage error (exit 2)")
+	})
+}
+
 // ---------------------------------------------------------------------------
 // Test helpers for formatModels / formatAgents tests
 // ---------------------------------------------------------------------------
@@ -175,7 +201,7 @@ func TestRun_FlagError_ReturnsExit2(t *testing.T) {
 // loadTestModels loads the fixture models_output.txt for integration-style tests.
 func loadTestModels(t *testing.T) []opencode.Model {
 	t.Helper()
-	abs, err := filepath.Abs(filepath.Join("test", "fixtures", "models_output.txt"))
+	abs, err := filepath.Abs(filepath.Join("..", "..", "test", "fixtures", "models_output.txt"))
 	require.NoError(t, err, "fixture file must exist")
 	data, err := os.ReadFile(abs)
 	require.NoError(t, err, "failed to read fixture")
@@ -185,7 +211,7 @@ func loadTestModels(t *testing.T) []opencode.Model {
 // loadTestConfig loads the fixture opencode.json for integration-style tests.
 func loadTestConfig(t *testing.T) *config.Config {
 	t.Helper()
-	abs, err := filepath.Abs(filepath.Join("test", "fixtures", "opencode.json"))
+	abs, err := filepath.Abs(filepath.Join("..", "..", "test", "fixtures", "opencode.json"))
 	require.NoError(t, err, "failed to resolve fixture path")
 	cfg, err := config.LoadConfig(abs)
 	require.NoError(t, err)
@@ -337,220 +363,146 @@ func TestFormatModels_ProvidersSortedAlphabetically(t *testing.T) {
 	}
 }
 
+func TestFormatModels_WithVariants(t *testing.T) {
+	models := []opencode.Model{
+		{
+			Provider: "openai",
+			ID:       "gpt-5",
+			FullName: "openai/gpt-5",
+			Variants: []opencode.VariantDescriptor{
+				{Name: "high"},
+				{Name: "low"},
+			},
+		},
+		{
+			Provider: "anthropic",
+			ID:       "claude",
+			FullName: "anthropic/claude",
+		},
+	}
+	var buf bytes.Buffer
+	err := formatModels(&buf, models)
+	require.NoError(t, err)
+
+	output := buf.String()
+	assert.Contains(t, output, "gpt-5  (variants: high, low)")
+	assert.Contains(t, output, "claude\n")
+}
+
 // ---------------------------------------------------------------------------
-// formatAgents — Agent Listing Output (REQ-CMD-003)
-//
-// formatAgents writes the agent listing to an io.Writer, making it testable
-// with bytes.Buffer.
+// formatAgents — authoritative catalog listing (T13)
 // ---------------------------------------------------------------------------
 
-// TestFormatAgents_HeaderPresent verifies the output contains the header.
-//
-// Spec: REQ-CMD-003 — Scenario: header
-func TestFormatAgents_HeaderPresent(t *testing.T) {
-	cfg := loadTestConfig(t)
+func TestFormatAgents_OnlyCatalogColumnsInDeterministicSectionOrder(t *testing.T) {
+	hidden := agentcatalog.AgentRecord{Name: "secret", Role: agentcatalog.RoleSubagent, Hidden: true, Model: "vendor/secret"}
+	catalog := agentcatalog.Catalog{Buckets: agentcatalog.Classify([]agentcatalog.AgentRecord{
+		{Name: "catch-all", Role: agentcatalog.RoleAll, Model: "vendor/all"},
+		hidden,
+		{Name: "Build", Role: agentcatalog.RolePrimary, Native: true, Model: "vendor/build"},
+		{Name: "custom", Role: agentcatalog.RolePrimary, Model: "vendor/custom"},
+	})}
+
 	var buf bytes.Buffer
-	err := formatAgents(&buf, cfg)
-
-	require.NoError(t, err)
-	assert.Contains(t, buf.String(), "OpenCode Agents")
-}
-
-// TestFormatAgents_GlobalModelNotSet verifies "(none)" appears when no global
-// model is configured.
-//
-// Spec: REQ-CMD-003 — Scenario: global default model not set
-func TestFormatAgents_GlobalModelNotSet(t *testing.T) {
-	cfg := loadTestConfig(t)
-	var buf bytes.Buffer
-	err := formatAgents(&buf, cfg)
-
-	require.NoError(t, err)
-	assert.Contains(t, buf.String(), "Global Default Model: (none)")
-}
-
-// TestFormatAgents_GlobalModelSet verifies the global model value appears when
-// set.
-//
-// Spec: REQ-CMD-003 — Scenario: global default model set
-func TestFormatAgents_GlobalModelSet(t *testing.T) {
-	cfg := loadTestConfig(t)
-	cfg.SetGlobalModel("opencode-go/glm-5.2")
-	var buf bytes.Buffer
-	err := formatAgents(&buf, cfg)
-
-	require.NoError(t, err)
-	assert.Contains(t, buf.String(), "Global Default Model: opencode-go/glm-5.2")
-}
-
-// TestFormatAgents_PrimaryAgentsSection verifies the primary agents section
-// exists and contains the known primary agents.
-//
-// Spec: REQ-CMD-003 — Scenario: primary agents section
-func TestFormatAgents_PrimaryAgentsSection(t *testing.T) {
-	cfg := loadTestConfig(t)
-	var buf bytes.Buffer
-	err := formatAgents(&buf, cfg)
-	require.NoError(t, err)
-
-	output := buf.String()
-	assert.Contains(t, output, "Primary Agents")
-	assert.Contains(t, output, "build")
-	assert.Contains(t, output, "plan")
-}
-
-// TestFormatAgents_SubagentsSection verifies the subagents section exists and
-// contains known subagents.
-//
-// Spec: REQ-CMD-003 — Scenario: subagents section
-func TestFormatAgents_SubagentsSection(t *testing.T) {
-	cfg := loadTestConfig(t)
-	var buf bytes.Buffer
-	err := formatAgents(&buf, cfg)
-	require.NoError(t, err)
-
-	output := buf.String()
-	assert.Contains(t, output, "Subagents")
-	assert.Contains(t, output, "code-reviewer")
-	assert.Contains(t, output, "parallel-dispatch")
-}
-
-// TestFormatAgents_AgentWithModelShowsValue verifies that an agent with a model
-// field shows the model value.
-//
-// Spec: REQ-CMD-003 — Scenario: agent model field
-func TestFormatAgents_AgentWithModelShowsValue(t *testing.T) {
-	cfg := loadTestConfig(t)
-	var buf bytes.Buffer
-	err := formatAgents(&buf, cfg)
-	require.NoError(t, err)
-
-	assert.Contains(t, buf.String(), "anthropic/claude-sonnet-4-20250514",
-		"code-reviewer model must appear in output")
-}
-
-// TestFormatAgents_AgentWithoutModelShowsNone verifies that an agent without a
-// model shows "(none)" for the model field.
-//
-// Spec: REQ-CMD-003 — Scenario: agent without model
-func TestFormatAgents_AgentWithoutModelShowsNone(t *testing.T) {
-	cfg := loadTestConfig(t)
-	var buf bytes.Buffer
-	err := formatAgents(&buf, cfg)
-	require.NoError(t, err)
-
-	output := buf.String()
-	// build has no model field — should show "(none)" in its section
-	buildIdx := strings.Index(output, "build")
-	require.GreaterOrEqual(t, buildIdx, 0, "build must appear")
-	buildSection := output[buildIdx:]
-	// Within build's section, "model:" must show "(none)"
-	modelIdx := strings.Index(buildSection, "model:")
-	require.GreaterOrEqual(t, modelIdx, 0, "model field must appear")
-	assert.Contains(t, buildSection[modelIdx:], "(none)",
-		"build model must be (none)")
-}
-
-// TestFormatAgents_TemperatureShownAsFloat verifies temperature shows as float.
-//
-// Spec: REQ-CMD-003 — "Temperature/top_p show as float"
-func TestFormatAgents_TemperatureShownAsFloat(t *testing.T) {
-	cfg := loadTestConfig(t)
-	var buf bytes.Buffer
-	err := formatAgents(&buf, cfg)
-	require.NoError(t, err)
-
-	// plan has temperature: 0.4
-	assert.Contains(t, buf.String(), "0.4",
-		"temperature must show as 0.4")
-	// Ensure we're NOT showing "0.4000" or similar
-	assert.NotContains(t, buf.String(), "0.4000",
-		"temperature must not have trailing zeros")
-}
-
-// TestFormatAgents_DisabledAgentMarked verifies that disabled agents show the
-// [DISABLED] marker.
-//
-// Spec: REQ-CMD-003 — Scenario: disabled agent marker
-func TestFormatAgents_DisabledAgentMarked(t *testing.T) {
-	cfg := loadTestConfig(t)
-	var buf bytes.Buffer
-	err := formatAgents(&buf, cfg)
-	require.NoError(t, err)
-
-	assert.Contains(t, buf.String(), "[DISABLED]",
-		"disabled agent (build) must have [DISABLED] marker")
-}
-
-// TestFormatAgents_HiddenAgentMarked verifies that hidden agents show the [H]
-// marker next to the agent name.
-//
-// Spec: REQ-CMD-003 — Scenario: hidden agent marker
-func TestFormatAgents_HiddenAgentMarked(t *testing.T) {
-	cfg := loadTestConfig(t)
-	var buf bytes.Buffer
-	err := formatAgents(&buf, cfg)
-	require.NoError(t, err)
-
-	assert.Contains(t, buf.String(), "parallel-dispatch [H]",
-		"hidden agent (parallel-dispatch) must have [H] marker after name")
-}
-
-// TestFormatAgents_AllSixFieldsShown verifies that all 6 editable field labels
-// appear in the output.
-//
-// Spec: REQ-CMD-003 — "Each agent shows all 6 editable fields"
-func TestFormatAgents_AllSixFieldsShown(t *testing.T) {
-	cfg := loadTestConfig(t)
-	var buf bytes.Buffer
-	err := formatAgents(&buf, cfg)
-	require.NoError(t, err)
-
-	output := buf.String()
-	fields := []string{"model:", "temperature:", "top_p:", "color:", "steps:", "disable:"}
-	for _, field := range fields {
-		assert.Contains(t, output, field, "field %q must appear", field)
+	require.NoError(t, formatAgents(&buf, catalog))
+	assert.Equal(t, "section\tname\tmode\tmodel\tstatus\n"+
+		"Primary\tBuild\tprimary\tvendor/build\tnative\n"+
+		"Primary\tcustom\tprimary\tvendor/custom\tcustom\n"+
+		"Subagent\tsecret\tsubagent\tvendor/secret\thidden(custom)\n"+
+		"All\tcatch-all\tall\tvendor/all\tcustom\n", buf.String())
+	for _, removed := range []string{"temperature", "top_p", "color", "steps", "disable", "Global Default Model"} {
+		assert.NotContains(t, buf.String(), removed)
 	}
 }
 
-// TestFormatAgents_SystemAgentsExcluded verifies that system agents do not
-// appear in the output.
-//
-// Spec: REQ-CMD-003 — Scenario: system agents excluded
-func TestFormatAgents_SystemAgentsExcluded(t *testing.T) {
-	cfg := loadTestConfig(t)
-	var buf bytes.Buffer
-	err := formatAgents(&buf, cfg)
-	require.NoError(t, err)
-
-	output := buf.String()
-	for _, name := range []string{"compactación", "title", "summary"} {
-		assert.NotContains(t, output, name,
-			"system agent %q must NOT appear in output", name)
+func TestFormatAgents_DegradedCatalogMarksEveryFallbackRecord(t *testing.T) {
+	catalog := agentcatalog.Catalog{
+		Buckets:  agentcatalog.Classify([]agentcatalog.AgentRecord{{Name: "fallback", Role: agentcatalog.RoleAll}}),
+		Degraded: true,
 	}
+	var buf bytes.Buffer
+	require.NoError(t, formatAgents(&buf, catalog))
+	assert.Equal(t, "section\tname\tmode\tmodel\tstatus\nAll\tfallback\tall\t\tdegraded\n", buf.String())
 }
 
-// TestFormatAgents_NonSystemAgentCount verifies that exactly 11 non-system
-// agents appear in the output (14 total - 3 system).
-//
-// Spec: REQ-CMD-003 — Scenario: only non-system agents shown
-func TestFormatAgents_NonSystemAgentCount(t *testing.T) {
-	cfg := loadTestConfig(t)
-	var buf bytes.Buffer
-	err := formatAgents(&buf, cfg)
-	require.NoError(t, err)
+type fakeAgentDiscovery struct {
+	catalog   agentcatalog.Catalog
+	directory string
+	calls     int
+}
 
-	output := buf.String()
-	// All 11 non-system agents must appear
-	expectedAgents := []string{
-		"build", "plan", // primary
-		"code-reviewer", "debug", "docs", "explore", "general",
-		"orchestrator", "parallel-dispatch", "security-auditor", "team-lead", // subagents
+func (f *fakeAgentDiscovery) Discover(_ context.Context, directory string) agentcatalog.Catalog {
+	f.calls++
+	f.directory = directory
+	return f.catalog
+}
+
+func TestRunTUIUsesAuthoritativeRuntimeCatalogOnce(t *testing.T) {
+	cfg := loadTestConfig(t)
+	want := agentcatalog.Catalog{Buckets: agentcatalog.Classify([]agentcatalog.AgentRecord{
+		{Name: "Build", Role: agentcatalog.RolePrimary, Native: true, Source: agentcatalog.SourceRuntime},
+		{Name: "plugin-review", Role: agentcatalog.RoleSubagent, Source: agentcatalog.SourcePlugin},
+		{Name: "runtime-all", Role: agentcatalog.RoleAll, Source: agentcatalog.SourceRuntime},
+	})}
+	discovery := &fakeAgentDiscovery{catalog: want}
+	var received agentcatalog.Catalog
+	constructed := false
+	run := false
+
+	err := runTUIWithDependencies(cfg, nil, 3, func(*config.Config) agentDiscoverer {
+		return discovery
+	}, func(gotCfg *config.Config, grouped map[string][]opencode.Model, backupCount int, catalog agentcatalog.Catalog) tea.Model {
+		constructed = true
+		assert.Same(t, cfg, gotCfg)
+		assert.Empty(t, grouped)
+		assert.Equal(t, 3, backupCount)
+		received = catalog
+		return nil
+	}, func(model tea.Model) error {
+		run = true
+		assert.Nil(t, model)
+		return nil
+	})
+
+	require.NoError(t, err)
+	assert.True(t, constructed)
+	assert.True(t, run)
+	assert.Equal(t, 1, discovery.calls, "one invocation must run runtime discovery exactly once")
+	assert.False(t, received.Degraded)
+	assert.Equal(t, want.Records(), received.Records())
+	assert.NotContains(t, recordNames(received), "fallback-only", "runtime success must not leak fallback-only identities")
+}
+
+func TestRunTUIRuntimeFailureUsesDegradedStaticCatalog(t *testing.T) {
+	cfg := loadTestConfig(t)
+	want := agentcatalog.Catalog{
+		Buckets:  agentcatalog.Classify([]agentcatalog.AgentRecord{{Name: "fallback-only", Role: agentcatalog.RoleAll, Source: agentcatalog.SourceConfig}}),
+		Degraded: true,
 	}
-	for _, name := range expectedAgents {
-		assert.Contains(t, output, name,
-			"non-system agent %q must appear", name)
+	discovery := &fakeAgentDiscovery{catalog: want}
+	var received agentcatalog.Catalog
+
+	stderr := captureStderr(t, func() {
+		err := runTUIWithDependencies(cfg, nil, 5, func(*config.Config) agentDiscoverer {
+			return discovery
+		}, func(_ *config.Config, _ map[string][]opencode.Model, _ int, catalog agentcatalog.Catalog) tea.Model {
+			received = catalog
+			return nil
+		}, func(tea.Model) error { return nil })
+		require.NoError(t, err, "degraded fallback must not prevent TUI startup")
+	})
+
+	assert.Equal(t, 1, discovery.calls)
+	assert.True(t, received.Degraded)
+	assert.Equal(t, []string{"fallback-only"}, recordNames(received))
+	assert.Equal(t, "Warning: runtime agent discovery failed; using static catalog\n", stderr)
+}
+
+func recordNames(catalog agentcatalog.Catalog) []string {
+	names := make([]string, 0, len(catalog.Records()))
+	for _, record := range catalog.Records() {
+		names = append(names, record.Name)
 	}
+	return names
 }
 
 // ---------------------------------------------------------------------------
@@ -613,7 +565,7 @@ func captureStdout(t *testing.T, fn func()) string {
 // fixture. Centralizes the path resolution for run() integration tests.
 func resolveFixtureConfigPath(t *testing.T) string {
 	t.Helper()
-	abs, err := filepath.Abs(filepath.Join("test", "fixtures", "opencode.json"))
+	abs, err := filepath.Abs(filepath.Join("..", "..", "test", "fixtures", "opencode.json"))
 	require.NoError(t, err)
 	return abs
 }
@@ -684,14 +636,45 @@ func TestRun_ConfigMalformed_DoesNotPrintConfigNotFound(t *testing.T) {
 // Spec: REQ-CMD-004 — "list-agents works without opencode installed"
 func TestRun_ListAgentsSucceedsWithValidConfig(t *testing.T) {
 	configPath := resolveFixtureConfigPath(t)
+	discovery := &fakeAgentDiscovery{catalog: agentcatalog.Catalog{Buckets: agentcatalog.Classify([]agentcatalog.AgentRecord{
+		{Name: "runtime-agent", Role: agentcatalog.RolePrimary, Native: true, Model: "openai/runtime"},
+	})}}
 
 	var code int
-	_ = captureStdout(t, func() {
-		code = run([]string{"--config", configPath, "--list-agents"})
+	stdout := captureStdout(t, func() {
+		code = runWithAgentDiscovery([]string{"--config", configPath, "--list-agents"}, func(cfg *config.Config) agentDiscoverer {
+			assert.Equal(t, configPath, cfg.Path(), "config remains rooted at --config")
+			return discovery
+		})
 	})
 
-	assert.Equal(t, 0, code,
-		"list-agents with valid config should succeed (exit 0) without opencode")
+	require.Equal(t, 0, code)
+	assert.Contains(t, stdout, "Primary\truntime-agent\tprimary\topenai/runtime\tnative")
+	wantCWD, err := os.Getwd()
+	require.NoError(t, err)
+	assert.Equal(t, wantCWD, discovery.directory, "runtime discovery must use current cwd")
+}
+
+func TestRun_ListAgentsRuntimeFailureUsesFallbackWithoutPollutingStdout(t *testing.T) {
+	configPath := resolveFixtureConfigPath(t)
+	discovery := &fakeAgentDiscovery{catalog: agentcatalog.Catalog{
+		Buckets:  agentcatalog.Classify([]agentcatalog.AgentRecord{{Name: "fallback", Role: agentcatalog.RoleAll, Model: "openai/fallback"}}),
+		Degraded: true,
+	}}
+
+	var code int
+	var stdout string
+	stderr := captureStderr(t, func() {
+		stdout = captureStdout(t, func() {
+			code = runWithAgentDiscovery([]string{"--config", configPath, "--list-agents"}, func(*config.Config) agentDiscoverer {
+				return discovery
+			})
+		})
+	})
+
+	assert.Equal(t, 0, code, "successful static fallback must exit 0")
+	assert.Equal(t, "section\tname\tmode\tmodel\tstatus\nAll\tfallback\tall\topenai/fallback\tdegraded\n", stdout)
+	assert.Equal(t, "Warning: runtime agent discovery failed; using static catalog\n", stderr)
 }
 
 // TestRun_NoPanic_OnAnyErrorPath verifies that run() never panics on any
@@ -719,7 +702,9 @@ func TestRun_NoPanic_OnAnyErrorPath(t *testing.T) {
 
 	assert.NotPanics(t, func() {
 		_ = captureStdout(t, func() {
-			run([]string{"--config", configPath, "--list-agents"})
+			runWithAgentDiscovery([]string{"--config", configPath, "--list-agents"}, func(*config.Config) agentDiscoverer {
+				return &fakeAgentDiscovery{}
+			})
 		})
 	}, "valid list-agents should not panic")
 }
@@ -908,8 +893,15 @@ func mockModels() []opencode.Model {
 
 // makeEmptyConfig creates a config with ONLY system agents (no targetable
 // agents), used for the empty-target-set test.
+//
+// It isolates $HOME (HOME + USERPROFILE) to an empty temp dir so the host's
+// global markdown agents do not appear as targetable agents via GetAgents
+// (markdown discovery is HOME-based).
 func makeEmptyConfig(t *testing.T) *config.Config {
 	t.Helper()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 	tmpDir := t.TempDir()
 	dst := filepath.Join(tmpDir, "opencode.json")
 	content := `{
@@ -1116,4 +1108,109 @@ func TestRunApplyModel_StdoutSummary(t *testing.T) {
 	assert.Contains(t, stdout, "Model openai/gpt-5 applied to")
 	assert.Contains(t, stdout, "plan")
 	assert.Contains(t, stdout, "✓")
+}
+
+// ---------------------------------------------------------------------------
+// printVersion / --version flag (VERSION-001..003)
+//
+// printVersion is the testable core of --version. It writes the version string
+// (or "(dev)" fallback) to a writer and never touches config or the filesystem.
+// The --version flag short-circuits run() BEFORE any config resolution or side
+// effect, so it succeeds even when no valid config exists.
+// ---------------------------------------------------------------------------
+
+// withVersion temporarily sets the package-level version var for a test and
+// restores the previous value on cleanup. Tests must not leak version state.
+func withVersion(t *testing.T, v string) {
+	t.Helper()
+	prev := version
+	version = v
+	t.Cleanup(func() { version = prev })
+}
+
+// TestPrintVersion_DevFallback verifies that an empty version string prints
+// "(dev)" — the default for an unstamped local build.
+//
+// Spec: VERSION-002 — empty version → "(dev)".
+func TestPrintVersion_DevFallback(t *testing.T) {
+	withVersion(t, "")
+	var buf bytes.Buffer
+	printVersion(&buf)
+	assert.Equal(t, "(dev)\n", buf.String(),
+		"empty version must print the (dev) fallback")
+}
+
+// TestPrintVersion_SetValue verifies that a non-empty version string is printed
+// verbatim. This is the path exercised by goreleaser's -ldflags "-X main.version".
+//
+// Spec: VERSION-001 — stamped version printed as-is.
+func TestPrintVersion_SetValue(t *testing.T) {
+	withVersion(t, "1.2.3")
+	var buf bytes.Buffer
+	printVersion(&buf)
+	assert.Equal(t, "1.2.3\n", buf.String(),
+		"stamped version must be printed verbatim")
+}
+
+// TestVersion_FlagParsed verifies that --version is registered as a boolean
+// flag and parsed into cliOptions.showVersion.
+func TestVersion_FlagParsed(t *testing.T) {
+	opts, code := parseFlags([]string{"--version"})
+	require.Equal(t, 0, code)
+	assert.True(t, opts.showVersion, "--version must set showVersion=true")
+}
+
+// TestVersion_FlagNotSetByDefault verifies that omitting --version leaves
+// showVersion false so the normal dispatch proceeds.
+func TestVersion_FlagNotSetByDefault(t *testing.T) {
+	opts, code := parseFlags([]string{"--list-agents"})
+	require.Equal(t, 0, code)
+	assert.False(t, opts.showVersion, "default must not request version")
+}
+
+// TestVersion_ExitsBeforeConfigLoad verifies that --version short-circuits
+// run() BEFORE any config resolution or load. We point --config at a
+// nonexistent path: if config were loaded, run() would return exit code 1
+// ("Config not found"). A passing exit 0 with version output proves the
+// short-circuit.
+//
+// Spec: VERSION-003 — --version exits 0 before config load / side effects.
+func TestVersion_ExitsBeforeConfigLoad(t *testing.T) {
+	withVersion(t, "")
+
+	var code int
+	stdout := captureStdout(t, func() {
+		code = run([]string{"--version", "--config", "/nonexistent/opencode.json"})
+	})
+
+	require.Equal(t, 0, code,
+		"--version MUST exit 0 before config load even with a bogus config path")
+	assert.Equal(t, "(dev)\n", stdout,
+		"--version must print the version to stdout")
+}
+
+// TestVersion_ExitsBeforeConfigLoad_Stamped mirrors the above with a stamped
+// version to confirm the printed value flows through run().
+func TestVersion_ExitsBeforeConfigLoad_Stamped(t *testing.T) {
+	withVersion(t, "9.9.9-test")
+
+	var code int
+	stdout := captureStdout(t, func() {
+		code = run([]string{"--version", "--config", "/nonexistent/opencode.json"})
+	})
+
+	require.Equal(t, 0, code)
+	assert.Equal(t, "9.9.9-test\n", stdout)
+}
+
+// TestVersion_PrecedenceOverListAgents verifies that --version wins over
+// --list-agents: run() returns 0 with version output, never reaching the
+// list-agents dispatch (which would also need a config).
+func TestVersion_PrecedenceOverListAgents(t *testing.T) {
+	withVersion(t, "")
+	stdout := captureStdout(t, func() {
+		code := run([]string{"--version", "--list-agents", "--config", "/nonexistent/opencode.json"})
+		assert.Equal(t, 0, code)
+	})
+	assert.Equal(t, "(dev)\n", stdout)
 }

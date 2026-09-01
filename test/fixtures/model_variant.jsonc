@@ -1,0 +1,122 @@
+// model_variant.jsonc — JSONC fixture demonstrating independent model, variant,
+// options, and arbitrary unknown keys with comments and trailing commas.
+{
+  "$schema": "https://opencode.ai/config.json",
+  // Top-level global model fallback
+  "model": "anthropic/claude-sonnet-4-20250514",
+  "provider": {
+    "anthropic": {
+      "options": {
+        "thinking": true,
+      },
+      "models": {
+        "claude-sonnet-4-20250514": {
+          "variants": {
+            "high": {
+              "options": {
+                "effort": "high",
+              },
+            },
+            "medium": {
+              "options": {
+                "effort": "medium",
+              },
+            },
+            "low": {
+              "options": {
+                "effort": "low",
+              },
+            },
+          },
+        },
+      },
+    },
+    "openai": {
+      "options": {
+        "max_tokens": 4096,
+      },
+    },
+  },
+  "agent": {
+    /* planner specifies model, variant, options, and custom metadata */
+    "planner": {
+      "mode": "primary",
+      "model": "openai/gpt-4o",
+      "variant": "high",
+      "options": {
+        "effort": "high",
+        "temperature": 0.2,
+      },
+      "description": "Planning agent with high reasoning effort",
+      "custom_metadata": {
+        "owner": "architecture-team",
+        "priority": 1,
+      },
+    },
+    "coder": {
+      "mode": "primary",
+      "model": "anthropic/claude-sonnet-4-20250514",
+      "variant": "medium",
+      "options": {
+        "thinking": true,
+        "budget_tokens": 8000,
+      },
+      "description": "Coding agent with medium variant",
+    },
+    // Model-only agent with no variant
+    "reviewer": {
+      "mode": "subagent",
+      "model": "anthropic/claude-sonnet-4-20250514",
+      "description": "Model-only agent without variant or options",
+    },
+    // Variant-only agent inheriting global model
+    "explorer": {
+      "mode": "subagent",
+      "variant": "low",
+      "description": "Variant-only agent inheriting global model",
+    },
+    // Options-only agent inheriting global model
+    "general": {
+      "mode": "subagent",
+      "options": {
+        "search_depth": 3,
+      },
+      "description": "Options-only agent inheriting global model",
+    },
+    /* build is disabled; should be protected against mutations */
+    "build": {
+      "mode": "primary",
+      "disable": true,
+      "model": "openai/gpt-4o-mini",
+      "variant": "fast",
+      "description": "Disabled build agent",
+    },
+  },
+  "permission": {
+    "edit": "ask",
+    "bash": "ask",
+    "webfetch": "allow",
+  },
+  "mcp": {
+    "context-server": {
+      "type": "local",
+      "command": [
+        "npx",
+        "-y",
+        "fake-context-server",
+      ],
+      "env": {
+        "API_SECRET": "test-secret-1234",
+      },
+    },
+  },
+  // Unknown top-level extension block to verify preservation
+  "unknown_extension_block": {
+    "arbitrary_flag": true,
+    "list_data": [
+      1,
+      2,
+      3,
+    ],
+  },
+}

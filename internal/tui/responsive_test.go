@@ -5,8 +5,9 @@ import (
 	"strings"
 	"testing"
 
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -18,7 +19,7 @@ func TestViewAgentList_RespectsTerminalHeightAndKeepsSelectionVisible(t *testing
 	m.agentCursor = len(selectableItems(m)) - 1
 	m = resizeModel(t, m, 80, 24)
 
-	out := m.View()
+	out := m.View().Content
 	t.Logf("agent list rendered %d lines at 80x24", renderedLineCount(out))
 	assert.LessOrEqual(t, renderedLineCount(out), 24)
 	assert.Contains(t, out, selectableItems(m)[m.agentCursor])
@@ -32,7 +33,7 @@ func TestViewModelSelection_RespectsTerminalHeightAndKeepsSelectionVisible(t *te
 	m.modelCursor = len(m.filteredModels) - 1
 	m = resizeModel(t, m, 80, 24)
 
-	out := m.View()
+	out := m.View().Content
 	t.Logf("60-model picker rendered %d lines at 80x24", renderedLineCount(out))
 	assert.LessOrEqual(t, renderedLineCount(out), 24)
 	assert.Contains(t, out, m.filteredModels[m.modelCursor].ID)
@@ -42,48 +43,42 @@ func TestWindowSizeMsg_ResizesListAndViewportComponents(t *testing.T) {
 	m := NewModel(fixtureConfig(t), sixtyModels(), 5)
 	m = resizeModel(t, m, 92, 31)
 
-	assert.Equal(t, 92, m.agentViewport.Width)
-	assert.Positive(t, m.agentViewport.Height)
-	assert.Equal(t, 92, m.modelViewport.Width)
-	assert.Positive(t, m.modelViewport.Height)
+	assert.Equal(t, 92, m.agentViewport.Width())
+	assert.Positive(t, m.agentViewport.Height())
+	assert.Equal(t, 92, m.modelViewport.Width())
+	assert.Positive(t, m.modelViewport.Height())
 }
 
-func TestViewAgentList_CompactRowShowsConfiguredValuesAndOmitsUnsetFields(t *testing.T) {
+func TestViewAgentList_CompactRowShowsModelOnly(t *testing.T) {
 	cfg := fixtureConfig(t)
-	require.NoError(t, cfg.SetAgentField("plan", "model", "openai/gpt-5"))
-	require.NoError(t, cfg.SetAgentField("plan", "top_p", 0.9))
-	require.NoError(t, cfg.SetAgentField("plan", "color", "#FF5733"))
-	require.NoError(t, cfg.SetAgentField("plan", "steps", 10.0))
+	require.NoError(t, cfg.SetAgentModelOverride("plan", "openai/gpt-5"))
 	m := NewModel(cfg, sampleGrouped(), 5)
 	m.agentCursor = indexOf(selectableItems(m), "plan")
 	m = resizeModel(t, m, 80, 24)
 
-	out := m.View()
+	out := m.View().Content
 	assert.Contains(t, out, "plan")
 	assert.Contains(t, out, "openai/gpt-5")
-	assert.Contains(t, out, "temp .4 · top_p .9 · color #FF5733 · steps 10")
-	assert.NotContains(t, out, "temperature:")
-	assert.NotContains(t, out, "disable:")
 }
 
 func TestView_FooterRemainsVisibleAtMinimumSupportedHeight(t *testing.T) {
 	m := NewModel(fixtureConfig(t), sampleGrouped(), 5)
 	m = resizeModel(t, m, minTerminalWidth, minTerminalHeight)
 
-	out := m.View()
+	out := m.View().Content
 	assert.LessOrEqual(t, renderedLineCount(out), minTerminalHeight)
-	assert.Contains(t, out, "Enter Edit · A All · M · S Save · Q Quit")
+	assert.Contains(t, out, "Enter Model · A · M · S Save · Q Quit")
 	assert.Contains(t, out, agentListScreenLabel)
 }
 
 func TestAgentList_LongModelValueTruncatesToTerminalWidth(t *testing.T) {
 	cfg := fixtureConfig(t)
-	require.NoError(t, cfg.SetAgentField("plan", "model", "provider/"+strings.Repeat("very-long-model-", 12)))
+	require.NoError(t, cfg.SetAgentModelOverride("plan", "provider/"+strings.Repeat("very-long-model-", 12)))
 	m := NewModel(cfg, sampleGrouped(), 5)
 	m.agentCursor = indexOf(selectableItems(m), "plan")
 	m = resizeModel(t, m, 60, 18)
 
-	assertRenderedWidthAtMost(t, m.View(), 60)
+	assertRenderedWidthAtMost(t, m.View().Content, 60)
 }
 
 func TestModelSelection_LongModelValueTruncatesToTerminalWidth(t *testing.T) {
@@ -97,12 +92,12 @@ func TestModelSelection_LongModelValueTruncatesToTerminalWidth(t *testing.T) {
 	initModelSelectionScreen(&m)
 	m = resizeModel(t, m, 60, 18)
 
-	assertRenderedWidthAtMost(t, m.View(), 60)
+	assertRenderedWidthAtMost(t, m.View().Content, 60)
 }
 
 func TestView_BelowMinimumTerminalSizeShowsCompactWarning(t *testing.T) {
 	m := resizeModel(t, NewModel(fixtureConfig(t), sampleGrouped(), 5), minTerminalWidth-1, minTerminalHeight-1)
-	out := m.View()
+	out := m.View().Content
 
 	assert.Contains(t, out, "Terminal too small")
 	assert.LessOrEqual(t, renderedLineCount(out), minTerminalHeight-1)
@@ -119,16 +114,8 @@ func TestView_HelpFootersFitSupportedWidthsAndKeepCriticalActions(t *testing.T) 
 		{
 			name:        "agent list",
 			model:       func(t *testing.T) Model { return NewModel(fixtureConfig(t), sampleGrouped(), 5) },
-			compactHelp: "Enter Edit · A All · M · S Save · Q Quit",
-			fullHelp:    "Enter Edit · A Apply-all · M Multi · S Review & Save · Q Quit",
-		},
-		{
-			name: "agent detail",
-			model: func(t *testing.T) Model {
-				return newDetailModel(t, "code-reviewer")
-			},
-			compactHelp: "Enter Edit · S Save · Esc Back",
-			fullHelp:    "Enter Edit · Space Toggle disable · S Review & Save · Esc Back",
+			compactHelp: "Enter Model · A · M · S Save · Q Quit",
+			fullHelp:    "Enter Model · A Apply-all · M Multi · S Review & Save · Q Quit",
 		},
 		{
 			name: "model picker",
@@ -141,15 +128,6 @@ func TestView_HelpFootersFitSupportedWidthsAndKeepCriticalActions(t *testing.T) 
 			},
 			compactHelp: "Enter Apply · Esc Cancel",
 			fullHelp:    "Enter Apply model · Esc Cancel",
-		},
-		{
-			name: "field input",
-			model: func(t *testing.T) Model {
-				m := newFieldInputModel(t, "code-reviewer", "temperature")
-				return m
-			},
-			compactHelp: "Enter Apply · Esc Discard",
-			fullHelp:    "Enter Apply · Esc Discard",
 		},
 		{
 			name: "save review",
@@ -171,11 +149,35 @@ func TestView_HelpFootersFitSupportedWidthsAndKeepCriticalActions(t *testing.T) 
 						expected = tt.fullHelp
 					}
 
-					footer := renderedLineContaining(t, m.View(), expected)
+					footer := renderedLineContaining(t, m.View().Content, expected)
 					assert.LessOrEqual(t, lipgloss.Width(footer), m.width)
 				})
 			}
 		})
+	}
+}
+
+func TestResponsiveHelp_SelectsCompactWordingBelowFullHelpThreshold(t *testing.T) {
+	full := "Enter Apply model · Esc Cancel"
+	compact := "Enter Apply · Esc Cancel"
+
+	for _, width := range []int{40, fullHelpMinWidth - 1} {
+		assert.Equal(t, compact, ansi.Strip(renderResponsiveHelp(width, full, compact)),
+			"width %d must render the compact wording", width)
+	}
+	for _, width := range []int{fullHelpMinWidth, 80} {
+		assert.Equal(t, full, ansi.Strip(renderResponsiveHelp(width, full, compact)),
+			"width %d must render the full wording", width)
+	}
+}
+
+func TestResponsiveChrome_HeaderAndStatusBarFitNarrowWidths(t *testing.T) {
+	m := NewModel(fixtureConfig(t), sampleGrouped(), 5)
+	m.dirty = true
+	for _, width := range []int{40, 60, 80} {
+		m.width = width
+		assertRenderedWidthAtMost(t, renderHeader(m, "Agents"), width)
+		assertRenderedWidthAtMost(t, renderStatusBar(m, "Agents", 7), width)
 	}
 }
 

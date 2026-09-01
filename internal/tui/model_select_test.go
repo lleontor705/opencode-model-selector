@@ -18,11 +18,13 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/charmbracelet/bubbles/textinput"
-	tea "github.com/charmbracelet/bubbletea"
+	"charm.land/bubbles/v2/textinput"
+	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/lleontor705/opencode-model-selector/internal/agentcatalog"
 	"github.com/lleontor705/opencode-model-selector/internal/opencode"
 )
 
@@ -43,7 +45,7 @@ func richGrouped() map[string][]opencode.Model {
 }
 
 // newModelSelectModel constructs a Model positioned on the Model Selection
-// screen. It mirrors the initialization that updateAgentList / updateAgentDetail
+// screen. It mirrors the initialization performed by updateAgentList
 // perform when transitioning to ScreenModelSelection.
 //
 //   - fieldEditing "global" → editing the global default model
@@ -58,6 +60,9 @@ func newModelSelectModel(t *testing.T, fieldEditing, agentName string) Model {
 	m.filterInput = textinput.New()
 	m.filterInput.Placeholder = "Type to filter..."
 	m.filterInput.Focus()
+	// Mirror initModelSelectionScreen: Bubbles v2 truncates the placeholder
+	// to Width()+1 runes, so the width must be seeded for it to render.
+	m.filterInput.SetWidth(len(m.filterInput.Placeholder))
 	m.modelCursor = 0
 	// Initialize filteredModels to the full flat list (show all initially).
 	m.filteredModels = append([]opencode.Model(nil), m.flatModels...)
@@ -113,7 +118,7 @@ func selectedVisibleModel(t *testing.T, m Model) string {
 
 func appliedModelAtCursor(t *testing.T, m Model) string {
 	t.Helper()
-	updated, _ := updateModelSelection(m, tea.KeyMsg{Type: tea.KeyEnter})
+	updated, _ := updateModelSelection(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	applied, ok := updated.config.GetGlobalModel()
 	require.True(t, ok)
 	return applied
@@ -395,7 +400,7 @@ func TestViewModelSelection_CurrentModelMarkerForAgent(t *testing.T) {
 	// code-reviewer has model "anthropic/claude-sonnet-4-20250514" in the fixture,
 	// which is NOT in richGrouped — so no checkmark should appear for the fixture
 	// models. Instead, set it to a model that IS in richGrouped.
-	require.NoError(t, m.config.SetAgentField("code-reviewer", "model", "opencode-go/glm-5.2"))
+	require.NoError(t, m.config.SetAgentModelOverride("code-reviewer", "opencode-go/glm-5.2"))
 	out := viewModelSelection(m)
 	assert.True(t, containsAny(out, "\u2713", "current"),
 		"the current per-agent model MUST be marked with a checkmark or 'current' indicator")
@@ -437,7 +442,7 @@ func TestUpdateModelSelection_CtrlN_MovesCursorDown(t *testing.T) {
 	m := newModelSelectModel(t, "global", "")
 	require.Equal(t, 0, m.modelCursor)
 
-	newM, _ := updateModelSelection(m, tea.KeyMsg{Type: tea.KeyCtrlN})
+	newM, _ := updateModelSelection(m, tea.KeyPressMsg{Code: 'n', Mod: tea.ModCtrl})
 	assert.Equal(t, 1, newM.modelCursor,
 		"cursor MUST be 1 after pressing Ctrl+N")
 }
@@ -445,7 +450,7 @@ func TestUpdateModelSelection_CtrlN_MovesCursorDown(t *testing.T) {
 // TestUpdateModelSelection_DownArrow_MovesDown verifies Down arrow works like j.
 func TestUpdateModelSelection_DownArrow_MovesDown(t *testing.T) {
 	m := newModelSelectModel(t, "global", "")
-	newM, _ := updateModelSelection(m, tea.KeyMsg{Type: tea.KeyDown})
+	newM, _ := updateModelSelection(m, tea.KeyPressMsg{Code: tea.KeyDown})
 	assert.Equal(t, 1, newM.modelCursor,
 		"Down arrow MUST move cursor down")
 }
@@ -455,7 +460,7 @@ func TestUpdateModelSelection_DownArrow_MovesDown(t *testing.T) {
 func TestUpdateModelSelection_CtrlN_StopsAtBottom(t *testing.T) {
 	m := newModelSelectModel(t, "global", "")
 	m.modelCursor = len(m.filteredModels) - 1 // last index
-	newM, _ := updateModelSelection(m, tea.KeyMsg{Type: tea.KeyCtrlN})
+	newM, _ := updateModelSelection(m, tea.KeyPressMsg{Code: 'n', Mod: tea.ModCtrl})
 	assert.Equal(t, len(m.filteredModels)-1, newM.modelCursor,
 		"cursor MUST NOT exceed the last index when pressing Ctrl+N")
 }
@@ -464,7 +469,7 @@ func TestUpdateModelSelection_CtrlN_StopsAtBottom(t *testing.T) {
 func TestUpdateModelSelection_CtrlP_MovesCursorUp(t *testing.T) {
 	m := newModelSelectModel(t, "global", "")
 	m.modelCursor = 2
-	newM, _ := updateModelSelection(m, tea.KeyMsg{Type: tea.KeyCtrlP})
+	newM, _ := updateModelSelection(m, tea.KeyPressMsg{Code: 'p', Mod: tea.ModCtrl})
 	assert.Equal(t, 1, newM.modelCursor,
 		"cursor MUST be 1 after pressing Ctrl+P from 2")
 }
@@ -473,7 +478,7 @@ func TestUpdateModelSelection_CtrlP_MovesCursorUp(t *testing.T) {
 func TestUpdateModelSelection_UpArrow_MovesUp(t *testing.T) {
 	m := newModelSelectModel(t, "global", "")
 	m.modelCursor = 2
-	newM, _ := updateModelSelection(m, tea.KeyMsg{Type: tea.KeyUp})
+	newM, _ := updateModelSelection(m, tea.KeyPressMsg{Code: tea.KeyUp})
 	assert.Equal(t, 1, newM.modelCursor,
 		"Up arrow MUST move cursor up")
 }
@@ -482,7 +487,7 @@ func TestUpdateModelSelection_UpArrow_MovesUp(t *testing.T) {
 func TestUpdateModelSelection_CtrlP_AtTopStaysAtZero(t *testing.T) {
 	m := newModelSelectModel(t, "global", "")
 	m.modelCursor = 0
-	newM, _ := updateModelSelection(m, tea.KeyMsg{Type: tea.KeyCtrlP})
+	newM, _ := updateModelSelection(m, tea.KeyPressMsg{Code: 'p', Mod: tea.ModCtrl})
 	assert.Equal(t, 0, newM.modelCursor,
 		"cursor MUST stay at 0 when pressing Ctrl+P at the top")
 }
@@ -500,7 +505,7 @@ func TestUpdateModelSelection_EnterOnGlobal_SetsGlobalModel(t *testing.T) {
 	require.False(t, m.dirty)
 
 	// Cursor 0 → first model in sorted filteredModels.
-	newM, _ := updateModelSelection(m, tea.KeyMsg{Type: tea.KeyEnter})
+	newM, _ := updateModelSelection(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 
 	assert.Equal(t, ScreenAgentList, newM.state,
 		"ENTER MUST return to previousState (ScreenAgentList)")
@@ -513,17 +518,17 @@ func TestUpdateModelSelection_EnterOnGlobal_SetsGlobalModel(t *testing.T) {
 }
 
 // TestUpdateModelSelection_EnterOnAgent_SetsAgentModel verifies that ENTER
-// when editing a per-agent model calls SetAgentField, sets dirty, and returns
+// when editing a per-agent model writes the override, sets dirty, and returns
 // to previousState.
 func TestUpdateModelSelection_EnterOnAgent_SetsAgentModel(t *testing.T) {
 	m := newModelSelectModel(t, "model", "code-reviewer")
-	m.navigationStack = []appState{ScreenAgentDetail}
+	m.navigationStack = []appState{ScreenAgentList}
 	require.False(t, m.dirty)
 
-	newM, _ := updateModelSelection(m, tea.KeyMsg{Type: tea.KeyEnter})
+	newM, _ := updateModelSelection(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 
-	assert.Equal(t, ScreenAgentDetail, newM.state,
-		"ENTER MUST return to previousState (ScreenAgentDetail)")
+	assert.Equal(t, ScreenAgentList, newM.state,
+		"ENTER MUST return directly to ScreenAgentList")
 
 	val, ok := newM.config.GetAgentField("code-reviewer", "model")
 	require.True(t, ok, "the agent model MUST be set after ENTER")
@@ -542,7 +547,7 @@ func TestUpdateModelSelection_Enter_SelectsCorrectModel(t *testing.T) {
 	m.modelCursor = 1
 	expected := m.filteredModels[1].FullName
 
-	newM, _ := updateModelSelection(m, tea.KeyMsg{Type: tea.KeyEnter})
+	newM, _ := updateModelSelection(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	gm, ok := newM.config.GetGlobalModel()
 	require.True(t, ok)
 	assert.Equal(t, expected, gm,
@@ -639,10 +644,10 @@ func TestModelSelection_PrefixProvidersApplyHighlightedModel(t *testing.T) {
 func TestModelSelection_ScrolledViewportNavigationAppliesHighlightedModel(t *testing.T) {
 	for _, key := range []struct {
 		name string
-		msg  tea.KeyMsg
+		msg  tea.KeyPressMsg
 	}{
-		{name: "Down", msg: tea.KeyMsg{Type: tea.KeyDown}},
-		{name: "CtrlN", msg: tea.KeyMsg{Type: tea.KeyCtrlN}},
+		{name: "Down", msg: tea.KeyPressMsg{Code: tea.KeyDown}},
+		{name: "CtrlN", msg: tea.KeyPressMsg{Code: 'n', Mod: tea.ModCtrl}},
 	} {
 		t.Run(key.name, func(t *testing.T) {
 			m := newModelSelectWithGrouped(t, realFixtureGrouped(t))
@@ -701,7 +706,7 @@ func TestUpdateModelSelection_Esc_ReturnsToPrevious(t *testing.T) {
 	m.navigationStack = []appState{ScreenAgentList}
 	dirtyBefore := m.dirty
 
-	newM, _ := updateModelSelection(m, tea.KeyMsg{Type: tea.KeyEsc})
+	newM, _ := updateModelSelection(m, tea.KeyPressMsg{Code: tea.KeyEsc})
 	assert.Equal(t, ScreenAgentList, newM.state,
 		"ESC MUST return to previousState without changes")
 	assert.Equal(t, dirtyBefore, newM.dirty,
@@ -718,7 +723,7 @@ func TestUpdateModelSelection_TypingUpdatesFilter(t *testing.T) {
 	m := newModelSelectModel(t, "global", "")
 	require.Empty(t, m.filterInput.Value())
 
-	newM, _ := updateModelSelection(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'g'}})
+	newM, _ := updateModelSelection(m, tea.KeyPressMsg{Text: "g"})
 	assert.Equal(t, "g", newM.filterInput.Value(),
 		"typing 'g' MUST update the filter input to 'g'")
 }
@@ -729,7 +734,7 @@ func TestUpdateModelSelection_TypingResetsCursor(t *testing.T) {
 	m := newModelSelectModel(t, "global", "")
 	m.modelCursor = 3
 
-	newM, _ := updateModelSelection(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'g'}})
+	newM, _ := updateModelSelection(m, tea.KeyPressMsg{Text: "g"})
 	assert.Equal(t, 0, newM.modelCursor,
 		"typing MUST reset cursor to 0")
 }
@@ -739,7 +744,7 @@ func TestUpdateModelSelection_TypingResetsCursor(t *testing.T) {
 func TestUpdateModelSelection_TypingAppliesFilter(t *testing.T) {
 	m := newModelSelectModel(t, "global", "")
 
-	newM, _ := updateModelSelection(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'o', 'p', 'e', 'n', 'c', 'o', 'd', 'e'}})
+	newM, _ := updateModelSelection(m, tea.KeyPressMsg{Text: "opencode"})
 	// After typing "opencode" every remaining model MUST match.
 	for _, model := range newM.filteredModels {
 		assert.True(t, matchesFilter(model, "opencode"),
@@ -754,7 +759,7 @@ func TestUpdateModelSelection_BackspaceDeletesFromFilter(t *testing.T) {
 	m.filterInput.SetValue("glm")
 	require.Equal(t, "glm", m.filterInput.Value())
 
-	newM, _ := updateModelSelection(m, tea.KeyMsg{Type: tea.KeyBackspace})
+	newM, _ := updateModelSelection(m, tea.KeyPressMsg{Code: tea.KeyBackspace})
 	assert.Equal(t, "gl", newM.filterInput.Value(),
 		"Backspace MUST delete the last character from the filter")
 }
@@ -769,7 +774,7 @@ func TestUpdate_DispatchesToModelSelection(t *testing.T) {
 	m := newModelSelectModel(t, "global", "")
 	m.modelCursor = 0
 
-	newM, _ := m.Update(tea.KeyMsg{Type: tea.KeyCtrlN})
+	newM, _ := m.Update(tea.KeyPressMsg{Code: 'n', Mod: tea.ModCtrl})
 	result, ok := newM.(Model)
 	require.True(t, ok, "Update must return the same Model type")
 	assert.Equal(t, 1, result.modelCursor,
@@ -780,7 +785,7 @@ func TestUpdate_DispatchesToModelSelection(t *testing.T) {
 // routes ScreenModelSelection to viewModelSelection.
 func TestView_DispatchesToModelSelection(t *testing.T) {
 	m := newModelSelectModel(t, "global", "")
-	out := m.View()
+	out := m.View().Content
 	assert.Contains(t, out, "opencode-go",
 		"global View() MUST dispatch ScreenModelSelection to viewModelSelection")
 }
@@ -798,7 +803,7 @@ func TestUpdateAgentList_EnterOnGlobal_InitializesFilterInput(t *testing.T) {
 	// Pre-pollute the filter input to verify it gets reset.
 	m.filterInput.SetValue("stale")
 
-	newM, _ := updateAgentList(m, tea.KeyMsg{Type: tea.KeyEnter})
+	newM, _ := updateAgentList(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	assert.Equal(t, ScreenModelSelection, newM.state)
 	assert.Empty(t, newM.filterInput.Value(),
 		"filterInput MUST be reset to empty when entering model selection")
@@ -806,27 +811,6 @@ func TestUpdateAgentList_EnterOnGlobal_InitializesFilterInput(t *testing.T) {
 		"filteredModels MUST be initialized with all models when entering model selection")
 	assert.Equal(t, 0, newM.modelCursor,
 		"cursor MUST be reset to 0 when entering model selection")
-}
-
-// TestUpdateAgentDetail_EnterOnModel_InitializesFilterInput verifies that
-// transitioning from agent detail to model selection initializes the filter
-// input and filteredModels.
-func TestUpdateAgentDetail_EnterOnModel_InitializesFilterInput(t *testing.T) {
-	m := NewModel(fixtureConfig(t), richGrouped(), 5)
-	m.state = ScreenAgentDetail
-	m.selectedAgent = "code-reviewer"
-	m.detailCursor = 0 // "model"
-	m.navigationStack = []appState{ScreenAgentList}
-	m.filterInput.SetValue("stale")
-
-	newM, _ := updateAgentDetail(m, tea.KeyMsg{Type: tea.KeyEnter})
-	assert.Equal(t, ScreenModelSelection, newM.state)
-	assert.Empty(t, newM.filterInput.Value(),
-		"filterInput MUST be reset to empty when entering model selection from detail")
-	assert.NotEmpty(t, newM.filteredModels,
-		"filteredModels MUST be initialized with all models when entering model selection from detail")
-	assert.Equal(t, 0, newM.modelCursor,
-		"cursor MUST be reset to 0 when entering model selection from detail")
 }
 
 // ---------------------------------------------------------------------------
@@ -837,7 +821,7 @@ func TestUpdateAgentDetail_EnterOnModel_InitializesFilterInput(t *testing.T) {
 // selecting a model in bulk-all mode applies it to every non-system,
 // non-disabled agent in the config.
 //
-// Spec: REQ-TUI-001 (Flow A 'a' key), REQ-TUI-004 (RecordChange per target).
+// Spec: REQ-TUI-001 (Flow A 'a' key), REQ-TUI-004 (model change per target).
 func TestSelectModelAtCursor_BulkAll_AppliesToAllNonDisabled(t *testing.T) {
 	m := newModelSelectModel(t, "bulk-all", "")
 	targetModel := m.filteredModels[m.modelCursor].FullName
@@ -912,12 +896,12 @@ func TestSelectModelAtCursor_BulkAll_SkipsDisabled(t *testing.T) {
 // TestSelectModelAtCursor_BulkAll_IdempotentNoSecondChange verifies that
 // an agent already on the target model produces no Change entry.
 //
-// Spec: REQ-TUI-004 — agent already on target → no Change (RecordChange coalescing).
+// Spec: REQ-TUI-004 — agent already on target → no model change.
 func TestSelectModelAtCursor_BulkAll_IdempotentNoSecondChange(t *testing.T) {
 	m := newModelSelectModel(t, "bulk-all", "")
 	targetModel := m.filteredModels[m.modelCursor].FullName
 
-	require.NoError(t, m.config.SetAgentField("code-reviewer", "model", targetModel))
+	require.NoError(t, m.config.SetAgentModelOverride("code-reviewer", targetModel))
 
 	result := selectModelAtCursor(m)
 
@@ -925,4 +909,310 @@ func TestSelectModelAtCursor_BulkAll_IdempotentNoSecondChange(t *testing.T) {
 		assert.NotEqual(t, "code-reviewer", ch.Target,
 			"agent already on target model MUST NOT produce a Change")
 	}
+}
+
+func TestT10BulkModelWritesDeduplicateCatalogNamesAndIncludeAllRole(t *testing.T) {
+	catalog := runtimeCatalogForTUI()
+	catalog.Buckets.All = append(catalog.Buckets.All,
+		agentcatalog.AgentRecord{Name: "z-primary", Role: agentcatalog.RoleAll},
+	)
+	m := NewModelWithCatalog(fixtureConfig(t), richGrouped(), 5, catalog)
+	m.state = ScreenModelSelection
+	m.navigationStack = []appState{ScreenAgentList}
+	m.fieldEditing = fieldEditingBulkAll
+	initModelSelectionScreen(&m)
+
+	result := selectModelAtCursor(m)
+	counts := map[string]int{}
+	for _, change := range result.changes {
+		counts[change.Target]++
+	}
+	assert.Equal(t, 1, counts["z-primary"])
+	assert.Equal(t, 1, counts["all-role"])
+	for name, count := range counts {
+		assert.Equal(t, 1, count, "catalog name %q must be written once", name)
+	}
+}
+
+func TestSelectModelAtCursor_BulkAll_WithVariants_PushesVariantSelectionScreen(t *testing.T) {
+	m := NewModel(fixtureConfig(t), sampleGroupedWithVariants(), 5)
+	m.state = ScreenModelSelection
+	m.navigationStack = []appState{ScreenAgentList}
+	m.fieldEditing = fieldEditingBulkAll
+	initModelSelectionScreen(&m)
+
+	anthropicIdx := -1
+	for i, mod := range m.filteredModels {
+		if mod.FullName == "anthropic/claude-sonnet-4-20250514" {
+			anthropicIdx = i
+			break
+		}
+	}
+	require.GreaterOrEqual(t, anthropicIdx, 0)
+	m.modelCursor = anthropicIdx
+
+	result := selectModelAtCursor(m)
+	assert.Equal(t, ScreenVariantSelection, result.state, "bulk-all with variants MUST push ScreenVariantSelection")
+	assert.Equal(t, "anthropic/claude-sonnet-4-20250514", result.pendingSelectedModel.FullName)
+	assert.Equal(t, fieldEditingBulkAll, result.fieldEditing)
+	assert.False(t, result.dirty, "entering variant selection must not mark dirty yet")
+}
+
+func TestSelectModelAtCursor_BulkList_WithVariants_PushesVariantSelectionScreen(t *testing.T) {
+	m := NewModel(fixtureConfig(t), sampleGroupedWithVariants(), 5)
+	m.state = ScreenModelSelection
+	m.navigationStack = []appState{ScreenAgentList}
+	m.fieldEditing = fieldEditingBulkList
+	m.bulkTargets = []string{"plan", "debug"}
+	initModelSelectionScreen(&m)
+
+	anthropicIdx := -1
+	for i, mod := range m.filteredModels {
+		if mod.FullName == "anthropic/claude-sonnet-4-20250514" {
+			anthropicIdx = i
+			break
+		}
+	}
+	require.GreaterOrEqual(t, anthropicIdx, 0)
+	m.modelCursor = anthropicIdx
+
+	result := selectModelAtCursor(m)
+	assert.Equal(t, ScreenVariantSelection, result.state, "bulk-list with variants MUST push ScreenVariantSelection")
+	assert.Equal(t, "anthropic/claude-sonnet-4-20250514", result.pendingSelectedModel.FullName)
+	assert.Equal(t, fieldEditingBulkList, result.fieldEditing)
+	assert.Equal(t, []string{"plan", "debug"}, result.bulkTargets)
+	assert.False(t, result.dirty)
+}
+
+func TestSelectModelAtCursor_Global_WithVariants_PushesVariantSelectionScreen(t *testing.T) {
+	m := NewModel(fixtureConfig(t), sampleGroupedWithVariants(), 5)
+	m.state = ScreenModelSelection
+	m.navigationStack = []appState{ScreenAgentList}
+	m.fieldEditing = "global"
+	initModelSelectionScreen(&m)
+
+	anthropicIdx := -1
+	for i, mod := range m.filteredModels {
+		if mod.FullName == "anthropic/claude-sonnet-4-20250514" {
+			anthropicIdx = i
+			break
+		}
+	}
+	require.GreaterOrEqual(t, anthropicIdx, 0)
+	m.modelCursor = anthropicIdx
+
+	oldGlobal, _ := m.config.GetGlobalModel()
+
+	result := selectModelAtCursor(m)
+	assert.Equal(t, ScreenVariantSelection, result.state, "global with variants MUST push ScreenVariantSelection")
+	assert.Equal(t, "anthropic/claude-sonnet-4-20250514", result.pendingSelectedModel.FullName)
+	assert.Equal(t, "global", result.fieldEditing)
+	assert.False(t, result.dirty, "entering variant selection must not mark dirty yet")
+
+	currentGlobal, _ := result.config.GetGlobalModel()
+	assert.Equal(t, oldGlobal, currentGlobal, "global model MUST NOT be persisted before variant selection")
+}
+
+func TestSelectModelAtCursor_Global_ModelOnly_Unchanged(t *testing.T) {
+	m := NewModel(fixtureConfig(t), sampleGroupedWithVariants(), 5)
+	m.state = ScreenModelSelection
+	m.navigationStack = []appState{ScreenAgentList}
+	m.fieldEditing = "global"
+	initModelSelectionScreen(&m)
+
+	opencodeIdx := -1
+	for i, mod := range m.filteredModels {
+		if mod.FullName == "opencode-go/glm-5.2" {
+			opencodeIdx = i
+			break
+		}
+	}
+	require.GreaterOrEqual(t, opencodeIdx, 0)
+	m.modelCursor = opencodeIdx
+
+	result := selectModelAtCursor(m)
+	assert.Equal(t, ScreenAgentList, result.state, "model-only global selection MUST return to ScreenAgentList")
+	assert.True(t, result.dirty, "model-only selection MUST mark dirty")
+	gm, ok := result.config.GetGlobalModel()
+	require.True(t, ok)
+	assert.Equal(t, "opencode-go/glm-5.2", gm)
+}
+
+// ---------------------------------------------------------------------------
+// Cursor Blink and Honest Minimal Animation (REQ-TUI-PRO-004)
+// ---------------------------------------------------------------------------
+
+func TestModelSelection_BlinkCommandPropagatesOnTransitions(t *testing.T) {
+	t.Run("from agent list Enter on global", func(t *testing.T) {
+		m := NewModel(fixtureConfig(t), richGrouped(), 5)
+		m.agentCursor = 0
+		updated, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+		res, ok := updated.(Model)
+		require.True(t, ok)
+		assert.Equal(t, ScreenModelSelection, res.state)
+		require.NotNil(t, cmd, "transition to ScreenModelSelection MUST return non-nil blink cmd")
+		blinkMsg := cmd()
+		require.NotNil(t, blinkMsg)
+
+		// Passing the blink msg back into Update advances the filterInput and returns next blink cmd
+		updated2, nextCmd := res.Update(blinkMsg)
+		res2, ok := updated2.(Model)
+		require.True(t, ok)
+		assert.Equal(t, ScreenModelSelection, res2.state)
+		assert.NotNil(t, nextCmd, "handling blink msg MUST return next blink cmd")
+	})
+
+	t.Run("from agent list Enter on agent", func(t *testing.T) {
+		m := NewModel(fixtureConfig(t), richGrouped(), 5)
+		items := selectableItems(m)
+		m.agentCursor = indexOf(items, "code-reviewer")
+		updated, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+		res, ok := updated.(Model)
+		require.True(t, ok)
+		assert.Equal(t, ScreenModelSelection, res.state)
+		assert.NotNil(t, cmd, "transition on agent ENTER MUST return blink cmd")
+	})
+
+	t.Run("from agent list 'a' bulk all", func(t *testing.T) {
+		m := NewModel(fixtureConfig(t), richGrouped(), 5)
+		updated, cmd := m.Update(tea.KeyPressMsg{Text: "a"})
+		res, ok := updated.(Model)
+		require.True(t, ok)
+		assert.Equal(t, ScreenModelSelection, res.state)
+		assert.NotNil(t, cmd, "transition on 'a' MUST return blink cmd")
+	})
+
+	t.Run("from agent multi select Enter", func(t *testing.T) {
+		m := NewModel(fixtureConfig(t), richGrouped(), 5)
+		m.state = ScreenAgentMultiSelect
+		initAgentMultiSelectScreen(&m)
+		require.NotEmpty(t, m.multiSelectChecked)
+		m.multiSelectChecked[0] = true
+		updated, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+		res, ok := updated.(Model)
+		require.True(t, ok)
+		assert.Equal(t, ScreenModelSelection, res.state)
+		assert.NotNil(t, cmd, "transition from multi-select MUST return blink cmd")
+	})
+}
+
+func TestModelSelection_BlinkCommandPropagatesOnInputUpdates(t *testing.T) {
+	m := newModelSelectModel(t, "global", "")
+
+	// Typing
+	updated, cmd := m.Update(tea.KeyPressMsg{Text: "g"})
+	res, ok := updated.(Model)
+	require.True(t, ok)
+	assert.Equal(t, "g", res.filterInput.Value())
+	assert.NotNil(t, cmd, "typing in filter input MUST propagate cmd")
+
+	// Backspace
+	updated2, cmd2 := res.Update(tea.KeyPressMsg{Code: tea.KeyBackspace})
+	res2, ok := updated2.(Model)
+	require.True(t, ok)
+	assert.Equal(t, "", res2.filterInput.Value())
+	assert.NotNil(t, cmd2, "backspace in filter input MUST propagate cmd")
+}
+
+func TestModelSelection_ExitingScreenStopsBlink(t *testing.T) {
+	t.Run("Esc cancels and stops blink", func(t *testing.T) {
+		m := newModelSelectModel(t, "global", "")
+		updated, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEsc})
+		res, ok := updated.(Model)
+		require.True(t, ok)
+		assert.Equal(t, ScreenAgentList, res.state)
+		assert.Nil(t, cmd, "canceling model picker MUST NOT schedule a command")
+
+		// Subsequent non-key messages on Agent List MUST NOT schedule blink
+		_, idleCmd := res.Update(textinput.Blink())
+		assert.Nil(t, idleCmd, "non-filter screen MUST NOT schedule blink commands")
+	})
+
+	t.Run("Enter selects and stops blink", func(t *testing.T) {
+		m := newModelSelectModel(t, "global", "")
+		updated, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+		res, ok := updated.(Model)
+		require.True(t, ok)
+		assert.Equal(t, ScreenAgentList, res.state)
+		assert.Nil(t, cmd, "selecting model MUST NOT schedule a blink command")
+	})
+}
+
+func TestModelSelection_Negative_NoSpinnerOrFakeProgress(t *testing.T) {
+	m := newModelSelectModel(t, "global", "")
+	out := m.View().Content
+
+	spinnerRunes := []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
+	for _, r := range spinnerRunes {
+		assert.NotContains(t, out, r, "Model Selection MUST NOT render spinner character %q", r)
+	}
+
+	lower := strings.ToLower(out)
+	assert.NotContains(t, lower, "loading")
+	assert.NotContains(t, lower, "spinner")
+	assert.NotContains(t, lower, "searching...")
+}
+
+func TestModelSelection_CatppuccinMochaVisualElements(t *testing.T) {
+	m := newModelSelectModel(t, "global", "")
+	m.width = 80
+	m.height = 24
+	out := m.View().Content
+
+	// Contains header banner
+	assert.Contains(t, out, "Select Model")
+	assert.Contains(t, out, "Interactive model selector")
+
+	// Search label
+	assert.Contains(t, out, "🔍 Search:")
+
+	// Provider badges with diamond marker
+	assert.Contains(t, out, "◆ opencode-go/")
+	assert.Contains(t, out, "◆ zai-coding-plan/")
+
+	// Highlight cursor marker
+	assert.Contains(t, out, "▶")
+
+	// Current model pill marker
+	cfg := fixtureConfig(t)
+	cfg.SetGlobalModel("opencode-go/glm-5.1")
+	mCurrent := NewModel(cfg, richGrouped(), 5)
+	mCurrent.state = ScreenModelSelection
+	mCurrent.fieldEditing = "global"
+	initModelSelectionScreen(&mCurrent)
+	outCurrent := mCurrent.View().Content
+	assert.Contains(t, outCurrent, "★ current")
+
+	// Responsive help footer
+	assert.Contains(t, out, "Enter Apply model · Esc Cancel")
+
+	// Status bar
+	assert.Contains(t, out, "Select Model")
+	assert.Contains(t, out, "5 models")
+}
+
+func TestModelSelection_ColorAccessibilityAndAnsiStrip(t *testing.T) {
+	cfg := fixtureConfig(t)
+	cfg.SetGlobalModel("opencode-go/glm-5.1")
+	m := NewModel(cfg, richGrouped(), 5)
+	m.state = ScreenModelSelection
+	m.fieldEditing = "global"
+	initModelSelectionScreen(&m)
+	m.width = 80
+	m.height = 24
+
+	stripped := ansi.Strip(m.View().Content)
+
+	assert.Contains(t, stripped, "ocs")
+	assert.Contains(t, stripped, "Select Model")
+	assert.Contains(t, stripped, "🔍 Search:")
+	assert.Contains(t, stripped, "◆ opencode-go/")
+	assert.Contains(t, stripped, "▶")
+	assert.Contains(t, stripped, "★ current")
+	assert.Contains(t, stripped, "opencode-go/glm-5.1")
+	assert.Contains(t, stripped, "zai-coding-plan/glm-5-turbo")
+	assert.Contains(t, stripped, "Enter Apply model · Esc Cancel")
+	assert.Contains(t, stripped, "5 models")
+	assert.Contains(t, stripped, "?")
+	assert.Contains(t, stripped, "for help")
 }

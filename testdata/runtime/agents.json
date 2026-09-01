@@ -1,0 +1,5 @@
+[
+  {"name":"build","mode":"primary","native":true,"hidden":null,"ignored":"future"},
+  {"name":"review","mode":"subagent","native":false,"hidden":true},
+  {"name":"general","mode":"all","native":false,"hidden":false}
+]

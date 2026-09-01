@@ -14,10 +14,124 @@ import (
 	"strings"
 	"testing"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/lleontor705/opencode-model-selector/internal/agentcatalog"
+	"github.com/lleontor705/opencode-model-selector/internal/config"
 )
+
+func runtimeCatalogForTUI() agentcatalog.Catalog {
+	return agentcatalog.Catalog{
+		Buckets: agentcatalog.Buckets{
+			Primary: []agentcatalog.AgentRecord{
+				{Name: "z-primary", Role: agentcatalog.RolePrimary, Native: true, Model: "runtime/z"},
+				{Name: "a-primary", Role: agentcatalog.RolePrimary, Native: true},
+			},
+			Subagent: []agentcatalog.AgentRecord{
+				{Name: "custom-hidden", Role: agentcatalog.RoleSubagent, Hidden: true, Source: agentcatalog.SourcePlugin},
+				{Name: "a-primary", Role: agentcatalog.RoleSubagent},
+			},
+			All: []agentcatalog.AgentRecord{
+				{Name: "all-role", Role: agentcatalog.RoleAll},
+				{Name: "native-hidden", Role: agentcatalog.RoleAll, Native: true, Hidden: true},
+			},
+		},
+	}
+}
+
+func TestViewAgentList_CatalogSectionsAreExclusiveDeterministicAndComplete(t *testing.T) {
+	m := NewModelWithCatalog(fixtureConfig(t), sampleGrouped(), 5, runtimeCatalogForTUI())
+	out := viewAgentList(m)
+
+	primary := strings.Index(out, "Primary Agents")
+	subagent := strings.Index(out, "Subagents")
+	all := strings.Index(out, "All Agents")
+	require.GreaterOrEqual(t, primary, 0)
+	require.Greater(t, subagent, primary)
+	require.Greater(t, all, subagent)
+	assert.Less(t, strings.Index(out, "a-primary"), strings.Index(out, "z-primary"))
+	assert.Equal(t, 1, strings.Count(out, "a-primary"), "a catalog identity must render in exactly one role section")
+	assert.Equal(t, 1, strings.Count(out, "all-role"))
+	assert.NotContains(t, out, "native-hidden", "native hidden identities are already catalog-filtered")
+}
+
+func TestViewAgentList_CustomHiddenCatalogAgentHasMarker(t *testing.T) {
+	m := NewModelWithCatalog(fixtureConfig(t), sampleGrouped(), 5, runtimeCatalogForTUI())
+	out := viewAgentList(m)
+	hidden := strings.Index(out, "custom-hidden")
+	require.GreaterOrEqual(t, hidden, 0)
+	assert.Contains(t, out[hidden:], "[H]")
+}
+
+func TestViewAgentList_DegradedCatalogWarnsWithoutBlockingNavigation(t *testing.T) {
+	catalog := runtimeCatalogForTUI()
+	catalog.Degraded = true
+	catalog.Diagnostics = []agentcatalog.Diagnostic{{Message: "runtime unavailable; using fallback"}}
+	m := NewModelWithCatalog(fixtureConfig(t), sampleGrouped(), 5, catalog)
+
+	assert.Contains(t, viewAgentList(m), "runtime unavailable; using fallback")
+	items := selectableItems(m)
+	m.agentCursor = indexOf(items, "all-role")
+	require.GreaterOrEqual(t, m.agentCursor, 0)
+	updated, _ := updateAgentList(m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	assert.Equal(t, ScreenModelSelection, updated.state)
+	assert.Equal(t, "all-role", updated.selectedAgent)
+}
+
+func TestUpdateAgentList_CatalogNavigationClampsStaleCursor(t *testing.T) {
+	m := NewModelWithCatalog(fixtureConfig(t), sampleGrouped(), 5, agentcatalog.Catalog{})
+	m.agentCursor = 99
+
+	updated, _ := updateAgentList(m, tea.KeyPressMsg{Code: tea.KeyDown})
+	assert.Equal(t, 0, updated.agentCursor)
+	require.NotPanics(t, func() {
+		_, _ = updateAgentList(updated, tea.KeyPressMsg{Code: tea.KeyEnter})
+	})
+}
+
+func TestT10AgentList_AllModelFlowsReachableWithoutGenericEditor(t *testing.T) {
+	m := NewModelWithCatalog(fixtureConfig(t), richGrouped(), 5, runtimeCatalogForTUI())
+
+	for _, tc := range []struct {
+		name      string
+		item      string
+		key       tea.KeyPressMsg
+		wantState appState
+		wantEdit  string
+	}{
+		{name: "global", item: globalItemKey, key: tea.KeyPressMsg{Code: tea.KeyEnter}, wantState: ScreenModelSelection, wantEdit: "global"},
+		{name: "runtime primary", item: "z-primary", key: tea.KeyPressMsg{Code: tea.KeyEnter}, wantState: ScreenModelSelection, wantEdit: "z-primary"},
+		{name: "all role", item: "all-role", key: tea.KeyPressMsg{Code: tea.KeyEnter}, wantState: ScreenModelSelection, wantEdit: "all-role"},
+		{name: "bulk all", key: tea.KeyPressMsg{Text: "a"}, wantState: ScreenModelSelection, wantEdit: fieldEditingBulkAll},
+		{name: "multi select", key: tea.KeyPressMsg{Text: "m"}, wantState: ScreenAgentMultiSelect},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			candidate := m
+			if tc.item != "" {
+				candidate.agentCursor = indexOf(selectableItems(candidate), tc.item)
+				require.GreaterOrEqual(t, candidate.agentCursor, 0)
+			}
+			updated, _ := updateAgentList(candidate, tc.key)
+			assert.Equal(t, tc.wantState, updated.state)
+			if tc.wantEdit != "" {
+				assert.Equal(t, tc.wantEdit, updated.fieldEditing)
+			}
+		})
+	}
+}
+
+func TestT10MultiSelectUsesUniqueCatalogNamesIncludingAllRole(t *testing.T) {
+	m := NewModelWithCatalog(fixtureConfig(t), richGrouped(), 5, runtimeCatalogForTUI())
+	updated, _ := updateAgentList(m, tea.KeyPressMsg{Text: "m"})
+
+	assert.Contains(t, updated.multiSelectItems, "z-primary")
+	assert.Contains(t, updated.multiSelectItems, "custom-hidden")
+	assert.Contains(t, updated.multiSelectItems, "all-role")
+	assert.Equal(t, 1, strings.Count(strings.Join(updated.multiSelectItems, "\n"), "a-primary"))
+}
 
 // ---------------------------------------------------------------------------
 // Rendering — viewAgentList (REQ-TUI-002)
@@ -114,7 +228,10 @@ func TestViewAgentList_GlobalModelNoneWhenUnset(t *testing.T) {
 // Spec: REQ-TUI-002 — Edge case — disabled agents greyed, shown but not editable.
 func TestViewAgentList_DisabledAgentShownWithIndicator(t *testing.T) {
 	m := NewModel(fixtureConfig(t), sampleGrouped(), 5)
-	out := viewAgentList(m)
+	// Lipgloss v2 emits per-rune SGR sequences for faint+strikethrough rows,
+	// so the disabled-row contract is asserted on the ANSI-stripped render
+	// (the design contract: markers survive ANSI stripping).
+	out := testANSISequence.ReplaceAllString(viewAgentList(m), "")
 	assert.Contains(t, out, "build",
 		"disabled agent 'build' MUST still appear visually in the list")
 	assert.Contains(t, out, "[DISABLED]",
@@ -282,7 +399,7 @@ func TestUpdateAgentList_J_MovesCursorDown(t *testing.T) {
 	m := NewModel(fixtureConfig(t), sampleGrouped(), 5)
 	assert.Equal(t, 0, m.agentCursor, "precondition: cursor starts at 0 (global)")
 
-	newM, _ := updateAgentList(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
+	newM, _ := updateAgentList(m, tea.KeyPressMsg{Text: "j"})
 	assert.Equal(t, 1, newM.agentCursor, "cursor MUST be 1 after pressing 'j'")
 }
 
@@ -293,7 +410,7 @@ func TestUpdateAgentList_J_MovesCursorDown(t *testing.T) {
 // Spec: REQ-TUI-003 — Edge case — j skips disabled agents.
 func TestUpdateAgentList_J_SkipsDisabledAgents(t *testing.T) {
 	m := NewModel(fixtureConfig(t), sampleGrouped(), 5)
-	newM, _ := updateAgentList(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
+	newM, _ := updateAgentList(m, tea.KeyPressMsg{Text: "j"})
 
 	items := selectableItems(newM)
 	require.True(t, newM.agentCursor < len(items), "cursor must be in bounds")
@@ -309,7 +426,7 @@ func TestUpdateAgentList_K_MovesCursorUp(t *testing.T) {
 	m := NewModel(fixtureConfig(t), sampleGrouped(), 5)
 	m.agentCursor = 2
 
-	newM, _ := updateAgentList(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'k'}})
+	newM, _ := updateAgentList(m, tea.KeyPressMsg{Text: "k"})
 	assert.Equal(t, 1, newM.agentCursor, "cursor MUST be 1 after pressing 'k' from 2")
 }
 
@@ -319,7 +436,7 @@ func TestUpdateAgentList_K_AtTopStaysAtZero(t *testing.T) {
 	m := NewModel(fixtureConfig(t), sampleGrouped(), 5)
 	m.agentCursor = 0
 
-	newM, _ := updateAgentList(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'k'}})
+	newM, _ := updateAgentList(m, tea.KeyPressMsg{Text: "k"})
 	assert.Equal(t, 0, newM.agentCursor,
 		"cursor MUST stay at 0 when pressing 'k' at the top")
 }
@@ -330,7 +447,7 @@ func TestUpdateAgentList_K_AtTopStaysAtZero(t *testing.T) {
 // Spec: REQ-TUI-003 — Down arrow navigates down.
 func TestUpdateAgentList_DownArrow_MovesDown(t *testing.T) {
 	m := NewModel(fixtureConfig(t), sampleGrouped(), 5)
-	newM, _ := updateAgentList(m, tea.KeyMsg{Type: tea.KeyDown})
+	newM, _ := updateAgentList(m, tea.KeyPressMsg{Code: tea.KeyDown})
 	assert.Equal(t, 1, newM.agentCursor, "Down arrow MUST move cursor down")
 }
 
@@ -341,7 +458,7 @@ func TestUpdateAgentList_DownArrow_MovesDown(t *testing.T) {
 func TestUpdateAgentList_UpArrow_MovesUp(t *testing.T) {
 	m := NewModel(fixtureConfig(t), sampleGrouped(), 5)
 	m.agentCursor = 2
-	newM, _ := updateAgentList(m, tea.KeyMsg{Type: tea.KeyUp})
+	newM, _ := updateAgentList(m, tea.KeyPressMsg{Code: tea.KeyUp})
 	assert.Equal(t, 1, newM.agentCursor, "Up arrow MUST move cursor up")
 }
 
@@ -354,24 +471,24 @@ func TestUpdateAgentList_EnterOnGlobal_TransitionsToModelSelection(t *testing.T)
 	m := NewModel(fixtureConfig(t), sampleGrouped(), 5)
 	m.agentCursor = 0 // __global__
 
-	newM, _ := updateAgentList(m, tea.KeyMsg{Type: tea.KeyEnter})
+	newM, _ := updateAgentList(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	assert.Equal(t, ScreenModelSelection, newM.state,
 		"ENTER on global MUST transition to ScreenModelSelection")
 }
 
-// TestUpdateAgentList_EnterOnAgent_TransitionsToAgentDetail verifies that
-// pressing ENTER on an agent transitions to the Agent Detail screen and sets
+// TestUpdateAgentList_EnterOnAgent_TransitionsToModelSelection verifies that
+// pressing ENTER on an agent transitions directly to model selection and sets
 // selectedAgent.
 //
 // Spec: REQ-TUI-003 — Happy path — ENTER on agent opens detail.
-func TestUpdateAgentList_EnterOnAgent_TransitionsToAgentDetail(t *testing.T) {
+func TestUpdateAgentList_EnterOnAgent_TransitionsToModelSelection(t *testing.T) {
 	m := NewModel(fixtureConfig(t), sampleGrouped(), 5)
 	// cursor 1 = "plan" (first non-disabled primary agent)
 	m.agentCursor = 1
 
-	newM, _ := updateAgentList(m, tea.KeyMsg{Type: tea.KeyEnter})
-	assert.Equal(t, ScreenAgentDetail, newM.state,
-		"ENTER on an agent MUST transition to ScreenAgentDetail")
+	newM, _ := updateAgentList(m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	assert.Equal(t, ScreenModelSelection, newM.state,
+		"ENTER on an agent MUST transition directly to ScreenModelSelection")
 	assert.Equal(t, "plan", newM.selectedAgent,
 		"selectedAgent MUST be set to the agent at the cursor position")
 }
@@ -384,7 +501,7 @@ func TestUpdateAgentList_S_WhenDirty_TransitionsToSaveConfirm(t *testing.T) {
 	m := NewModel(fixtureConfig(t), sampleGrouped(), 5)
 	m.dirty = true
 
-	newM, _ := updateAgentList(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}})
+	newM, _ := updateAgentList(m, tea.KeyPressMsg{Text: "s"})
 	assert.Equal(t, ScreenSaveConfirm, newM.state,
 		"'s' when dirty MUST transition to ScreenSaveConfirm")
 }
@@ -397,7 +514,7 @@ func TestUpdateAgentList_S_WhenNotDirty_StaysOnScreen(t *testing.T) {
 	m := NewModel(fixtureConfig(t), sampleGrouped(), 5)
 	require.False(t, m.dirty)
 
-	newM, _ := updateAgentList(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}})
+	newM, _ := updateAgentList(m, tea.KeyPressMsg{Text: "s"})
 	assert.Equal(t, ScreenAgentList, newM.state,
 		"'s' when NOT dirty MUST stay on ScreenAgentList")
 }
@@ -408,7 +525,7 @@ func TestUpdateAgentList_S_WhenNotDirty_StaysOnScreen(t *testing.T) {
 // Spec: REQ-TUI-003 — Happy path — q quits.
 func TestUpdateAgentList_Q_Quits(t *testing.T) {
 	m := NewModel(fixtureConfig(t), sampleGrouped(), 5)
-	_, cmd := updateAgentList(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'q'}})
+	_, cmd := updateAgentList(m, tea.KeyPressMsg{Text: "q"})
 	require.NotNil(t, cmd, "'q' MUST produce a non-nil command")
 	assert.IsType(t, tea.QuitMsg{}, cmd(), "'q' MUST produce a tea.QuitMsg")
 }
@@ -417,7 +534,7 @@ func TestUpdateAgentList_Q_Quits(t *testing.T) {
 // state or cursor.
 func TestUpdateAgentList_OtherKey_NoOp(t *testing.T) {
 	m := NewModel(fixtureConfig(t), sampleGrouped(), 5)
-	newM, cmd := updateAgentList(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
+	newM, cmd := updateAgentList(m, tea.KeyPressMsg{Text: "x"})
 	assert.Equal(t, ScreenAgentList, newM.state, "unmapped key MUST not change state")
 	assert.Equal(t, 0, newM.agentCursor, "unmapped key MUST not move cursor")
 	assert.Nil(t, cmd, "unmapped key MUST produce a nil command")
@@ -441,7 +558,7 @@ func TestUpdateAgentList_Q_NotDirty_QuitsImmediately(t *testing.T) {
 	m := NewModel(fixtureConfig(t), sampleGrouped(), 5)
 	require.False(t, m.dirty, "precondition: dirty must be false")
 
-	newM, cmd := updateAgentList(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'q'}})
+	newM, cmd := updateAgentList(m, tea.KeyPressMsg{Text: "q"})
 	require.NotNil(t, cmd, "'q' with dirty=false MUST produce a quit command")
 	assert.IsType(t, tea.QuitMsg{}, cmd(), "'q' with dirty=false MUST produce a tea.QuitMsg")
 	assert.False(t, newM.quitConfirm, "quitConfirm MUST stay false when not dirty")
@@ -456,7 +573,7 @@ func TestUpdateAgentList_Q_Dirty_ShowsConfirmation(t *testing.T) {
 	m := NewModel(fixtureConfig(t), sampleGrouped(), 5)
 	m.dirty = true
 
-	newM, cmd := updateAgentList(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'q'}})
+	newM, cmd := updateAgentList(m, tea.KeyPressMsg{Text: "q"})
 	assert.True(t, newM.quitConfirm, "'q' with dirty=true MUST set quitConfirm")
 	assert.Nil(t, cmd, "'q' with dirty=true MUST NOT produce a quit command")
 }
@@ -470,7 +587,7 @@ func TestUpdateAgentList_CtrlC_Dirty_ShowsConfirmation(t *testing.T) {
 	m := NewModel(fixtureConfig(t), sampleGrouped(), 5)
 	m.dirty = true
 
-	newM, cmd := updateAgentList(m, tea.KeyMsg{Type: tea.KeyCtrlC})
+	newM, cmd := updateAgentList(m, tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl})
 	assert.True(t, newM.quitConfirm, "Ctrl+C with dirty=true MUST set quitConfirm")
 	assert.Nil(t, cmd, "Ctrl+C with dirty=true MUST NOT quit immediately")
 }
@@ -484,7 +601,7 @@ func TestUpdateAgentList_QuitConfirm_Y_ConfirmsQuit(t *testing.T) {
 	m.dirty = true
 	m.quitConfirm = true
 
-	_, cmd := updateAgentList(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
+	_, cmd := updateAgentList(m, tea.KeyPressMsg{Text: "y"})
 	require.NotNil(t, cmd, "'y' in quitConfirm MUST produce a quit command")
 	assert.IsType(t, tea.QuitMsg{}, cmd(), "'y' in quitConfirm MUST produce tea.QuitMsg")
 }
@@ -496,7 +613,7 @@ func TestUpdateAgentList_QuitConfirm_UpperY_ConfirmsQuit(t *testing.T) {
 	m.dirty = true
 	m.quitConfirm = true
 
-	_, cmd := updateAgentList(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'Y'}})
+	_, cmd := updateAgentList(m, tea.KeyPressMsg{Text: "Y"})
 	require.NotNil(t, cmd, "'Y' in quitConfirm MUST produce a quit command")
 	assert.IsType(t, tea.QuitMsg{}, cmd(), "'Y' in quitConfirm MUST produce tea.QuitMsg")
 }
@@ -508,7 +625,7 @@ func TestUpdateAgentList_QuitConfirm_Enter_ConfirmsQuit(t *testing.T) {
 	m.dirty = true
 	m.quitConfirm = true
 
-	_, cmd := updateAgentList(m, tea.KeyMsg{Type: tea.KeyEnter})
+	_, cmd := updateAgentList(m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	require.NotNil(t, cmd, "ENTER in quitConfirm MUST produce a quit command")
 	assert.IsType(t, tea.QuitMsg{}, cmd(), "ENTER in quitConfirm MUST produce tea.QuitMsg")
 }
@@ -523,7 +640,7 @@ func TestUpdateAgentList_QuitConfirm_N_CancelsQuit(t *testing.T) {
 	m.dirty = true
 	m.quitConfirm = true
 
-	newM, cmd := updateAgentList(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
+	newM, cmd := updateAgentList(m, tea.KeyPressMsg{Text: "n"})
 	assert.False(t, newM.quitConfirm, "'n' MUST clear quitConfirm")
 	assert.Nil(t, cmd, "'n' MUST NOT produce a quit command")
 	assert.Equal(t, ScreenAgentList, newM.state, "'n' MUST stay on ScreenAgentList")
@@ -536,7 +653,7 @@ func TestUpdateAgentList_QuitConfirm_UpperN_CancelsQuit(t *testing.T) {
 	m.dirty = true
 	m.quitConfirm = true
 
-	newM, cmd := updateAgentList(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'N'}})
+	newM, cmd := updateAgentList(m, tea.KeyPressMsg{Text: "N"})
 	assert.False(t, newM.quitConfirm, "'N' MUST clear quitConfirm")
 	assert.Nil(t, cmd, "'N' MUST NOT produce a quit command")
 }
@@ -548,7 +665,7 @@ func TestUpdateAgentList_QuitConfirm_Esc_CancelsQuit(t *testing.T) {
 	m.dirty = true
 	m.quitConfirm = true
 
-	newM, cmd := updateAgentList(m, tea.KeyMsg{Type: tea.KeyEsc})
+	newM, cmd := updateAgentList(m, tea.KeyPressMsg{Code: tea.KeyEsc})
 	assert.False(t, newM.quitConfirm, "ESC MUST clear quitConfirm")
 	assert.Nil(t, cmd, "ESC MUST NOT produce a quit command")
 	assert.Equal(t, ScreenAgentList, newM.state, "ESC in quitConfirm MUST stay on AgentList")
@@ -564,7 +681,7 @@ func TestUpdateAgentList_QuitConfirm_J_Ignored(t *testing.T) {
 	m.quitConfirm = true
 	m.agentCursor = 0
 
-	newM, cmd := updateAgentList(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
+	newM, cmd := updateAgentList(m, tea.KeyPressMsg{Text: "j"})
 	assert.True(t, newM.quitConfirm, "'j' MUST NOT clear quitConfirm")
 	assert.Equal(t, 0, newM.agentCursor, "'j' MUST NOT move cursor during quitConfirm")
 	assert.Nil(t, cmd, "'j' MUST NOT produce a command during quitConfirm")
@@ -578,7 +695,7 @@ func TestUpdateAgentList_QuitConfirm_K_Ignored(t *testing.T) {
 	m.quitConfirm = true
 	m.agentCursor = 2
 
-	newM, cmd := updateAgentList(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'k'}})
+	newM, cmd := updateAgentList(m, tea.KeyPressMsg{Text: "k"})
 	assert.True(t, newM.quitConfirm, "'k' MUST NOT clear quitConfirm")
 	assert.Equal(t, 2, newM.agentCursor, "'k' MUST NOT move cursor during quitConfirm")
 	assert.Nil(t, cmd, "'k' MUST NOT produce a command during quitConfirm")
@@ -623,19 +740,19 @@ func TestUpdateAgentList_CancelThenEnter_TransitionsCleanly(t *testing.T) {
 	m.agentCursor = 1 // plan
 
 	// Step 1: 'q' with dirty → quitConfirm=true
-	m1, _ := updateAgentList(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'q'}})
+	m1, _ := updateAgentList(m, tea.KeyPressMsg{Text: "q"})
 	require.True(t, m1.quitConfirm, "step 1: quitConfirm must be set")
 
 	// Step 2: 'n' → cancel, quitConfirm=false
-	m2, _ := updateAgentList(m1, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
+	m2, _ := updateAgentList(m1, tea.KeyPressMsg{Text: "n"})
 	require.False(t, m2.quitConfirm, "step 2: quitConfirm must be cleared")
 
-	// Step 3: ENTER → transitions to AgentDetail, quitConfirm still false
-	m3, _ := updateAgentList(m2, tea.KeyMsg{Type: tea.KeyEnter})
-	assert.Equal(t, ScreenAgentDetail, m3.state,
+	// Step 3: ENTER → transitions directly to model selection.
+	m3, _ := updateAgentList(m2, tea.KeyPressMsg{Code: tea.KeyEnter})
+	assert.Equal(t, ScreenModelSelection, m3.state,
 		"ENTER after canceling quit MUST transition normally")
 	assert.False(t, m3.quitConfirm,
-		"quitConfirm MUST be false after transitioning to AgentDetail")
+		"quitConfirm MUST be false after transitioning to model selection")
 }
 
 // ---------------------------------------------------------------------------
@@ -679,4 +796,194 @@ func TestViewAgentList_NoSuccessBannerWhenNotSaved(t *testing.T) {
 	m.saveSuccess = false
 	out := viewAgentList(m)
 	assert.NotContains(t, out, "Saved successfully", "should not show banner when not saved")
+}
+
+// TestViewAgentList_ShowsEffectiveModelAfterPickerRoundTrip is the round-trip
+// regression for the stale-model bug: compactFieldValue used to prioritize the
+// discovery-time catalog snapshot (catalogByName[name].Model), so after
+// selecting a NEW model in the picker and returning to the agent list, the row
+// still showed the frozen pre-selection model instead of the live effective
+// model.
+//
+// Round-trip reproduced at the unit level with the real production handlers:
+//  1. ENTER on a catalog agent whose row shows its resolved snapshot model.
+//  2. selectModelAtCursor commits a different model (inline-JSON override,
+//     dirty, pending save) and pops back to ScreenAgentList.
+//  3. viewAgentList must render the newly selected effective model.
+//
+// The pre-selection assertion also pins the fallback contract: an agent with
+// no JSON/md/global model still displays its catalog-resolved value, so the
+// fix must preserve the global/md fallbacks — not drop catalog-only models.
+func TestViewAgentList_ShowsEffectiveModelAfterPickerRoundTrip(t *testing.T) {
+	m := NewModelWithCatalog(fixtureConfig(t), richGrouped(), 5, runtimeCatalogForTUI())
+
+	// Precondition: z-primary currently resolves to its catalog snapshot.
+	pre := viewAgentList(m)
+	assert.Contains(t, pre, "runtime/z",
+		"pre-selection: the catalog-resolved model must still be displayed")
+
+	// Step 1: ENTER on z-primary → model selection screen.
+	items := selectableItems(m)
+	m.agentCursor = indexOf(items, "z-primary")
+	require.GreaterOrEqual(t, m.agentCursor, 0)
+	picker, _ := updateAgentList(m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	require.Equal(t, ScreenModelSelection, picker.state)
+	require.Equal(t, "z-primary", picker.selectedAgent)
+
+	// Step 2: commit a different model at the picker cursor.
+	target := -1
+	for i, mdl := range picker.filteredModels {
+		if mdl.FullName == "opencode-go/glm-5.2" {
+			target = i
+			break
+		}
+	}
+	require.GreaterOrEqual(t, target, 0, "picker must offer opencode-go/glm-5.2")
+	picker.modelCursor = target
+	after := selectModelAtCursor(picker)
+
+	// Step 3: back on the agent list — the effective model must be live.
+	require.Equal(t, ScreenAgentList, after.state,
+		"selectModelAtCursor must pop back to the agent list")
+	require.True(t, after.dirty,
+		"an unsaved model selection must mark the model dirty")
+	out := viewAgentList(after)
+	assert.Contains(t, out, "opencode-go/glm-5.2",
+		"agent list MUST show the newly selected model immediately after returning from the picker")
+	assert.NotContains(t, out, "runtime/z",
+		"the stale catalog snapshot MUST NOT be displayed once a live override exists")
+}
+
+// TestViewAgentList_PerformsSingleMarkdownPassPerRender pins the render-cost
+// contract behind the live-model fix: every markdown-dependent config read
+// during an agent-list render MUST route through mergedAgentsForRender, and
+// the render MUST trigger it exactly ONCE — not once per rendered row.
+//
+// Why: Config.MergedAgents (and ResolveEffectiveModel / GetMergedAgentField,
+// which call the same discovery internally) re-glob and re-parse the global
+// and project markdown agent directories on EVERY invocation. Resolving the
+// effective model per row therefore multiplies filesystem I/O by the agent
+// count on every frame. The count is asserted per viewAgentList call in both
+// layout modes (unsized fallback path and the viewport path), so a regression
+// to per-row resolution fails on either side: N passes (> 1) when rows
+// resolve through discovery again, or 0 passes when the render bypasses the
+// shared snapshot entirely.
+func TestViewAgentList_PerformsSingleMarkdownPassPerRender(t *testing.T) {
+	m := NewModelWithCatalog(fixtureConfig(t), richGrouped(), 5, runtimeCatalogForTUI())
+	rows := len(m.primaryAgents) + len(m.subagents) + len(m.allAgents)
+	require.Greater(t, rows, 1, "fixture must render multiple agent rows for this oracle to be meaningful")
+
+	calls := 0
+	orig := mergedAgentsForRender
+	mergedAgentsForRender = func(c *config.Config) map[string]*config.MergedAgent {
+		calls++
+		return orig(c)
+	}
+	t.Cleanup(func() { mergedAgentsForRender = orig })
+
+	// Render 1: unsized fallback path (width/height == 0).
+	assert.NotEmpty(t, viewAgentList(m))
+	assert.Equal(t, 1, calls,
+		"one agent-list render MUST perform exactly one markdown-discovery pass; got %d for %d rows (per-row resolution rediscovers agents once per row)",
+		calls, rows)
+
+	// Render 2: sized viewport path — same contract, fresh count baseline.
+	calls = 0
+	m.width, m.height = 80, 24
+	assert.NotEmpty(t, viewAgentList(m))
+	assert.Equal(t, 1, calls,
+		"the viewport render path MUST also perform exactly one markdown-discovery pass; got %d for %d rows",
+		calls, rows)
+}
+
+func TestViewAgentList_CatalogWarningUsesBorderedOverlayBox(t *testing.T) {
+	catalog := runtimeCatalogForTUI()
+	catalog.Degraded = true
+	catalog.Diagnostics = []agentcatalog.Diagnostic{{Message: "runtime unavailable; using fallback"}}
+	m := NewModelWithCatalog(fixtureConfig(t), sampleGrouped(), 5, catalog)
+	out := viewAgentList(m)
+
+	stripped := ansi.Strip(out)
+	assert.Contains(t, stripped, "⚠ runtime unavailable; using fallback")
+	assert.Contains(t, stripped, "╭", "catalog warning must be enclosed in a bordered overlay box")
+	assert.Contains(t, stripped, "╰")
+}
+
+func TestViewAgentList_SaveSuccessUsesBorderedOverlayBox(t *testing.T) {
+	cfg := fixtureConfig(t)
+	m := NewModel(cfg, sampleGrouped(), 5)
+	m.saveSuccess = true
+	out := viewAgentList(m)
+
+	stripped := ansi.Strip(out)
+	assert.Contains(t, stripped, "✓ Saved successfully")
+	assert.Contains(t, stripped, "╭", "save success must be enclosed in a bordered overlay box")
+	assert.Contains(t, stripped, "╰")
+}
+
+func TestViewAgentList_QuitConfirmUsesBorderedOverlayBox(t *testing.T) {
+	m := NewModel(fixtureConfig(t), sampleGrouped(), 5)
+	m.dirty = true
+	m.quitConfirm = true
+	out := viewAgentList(m)
+
+	stripped := ansi.Strip(out)
+	assert.Contains(t, stripped, "⚠ You have unsaved changes. Quit anyway? (y/n)")
+	assert.Contains(t, stripped, "╭", "quit confirmation must be enclosed in a bordered overlay box")
+	assert.Contains(t, stripped, "╰")
+}
+
+func TestViewAgentList_OverlaysBoundedAtNarrowTerminalWidth(t *testing.T) {
+	cfg := fixtureConfig(t)
+	catalog := runtimeCatalogForTUI()
+	catalog.Degraded = true
+	catalog.Diagnostics = []agentcatalog.Diagnostic{{Message: "runtime unavailable; using fallback"}}
+	m := NewModelWithCatalog(cfg, sampleGrouped(), 5, catalog)
+	m.saveSuccess = true
+	m = resizeModel(t, m, 40, 18)
+
+	out := m.View().Content
+	assertRenderedWidthAtMost(t, out, 40)
+	assert.LessOrEqual(t, renderedLineCount(out), 18)
+}
+
+func TestViewAgentList_AgentRowMarkersAndBadgesSurviveAnsiStrip(t *testing.T) {
+	cfg := fixtureConfig(t)
+	m := NewModelWithCatalog(cfg, richGrouped(), 5, runtimeCatalogForTUI())
+	m.agentCursor = 0 // __global__
+	out := viewAgentList(m)
+
+	stripped := ansi.Strip(out)
+	assert.Contains(t, stripped, "▶", "selected global row must show cursor prefix")
+	assert.Contains(t, stripped, "[Global Default Model]")
+	assert.Contains(t, stripped, "◆ Primary Agents", "primary agents section header must include diamond marker")
+	assert.Contains(t, stripped, "◆ Subagents", "subagents section header must include diamond marker")
+	assert.Contains(t, stripped, "◆ All Agents", "all agents section header must include diamond marker")
+	assert.Contains(t, stripped, "[H]", "hidden agent must display [H] badge")
+	assert.Contains(t, stripped, "· model", "agent row must include model separator")
+}
+
+func TestAgentListViewportHeight_DeductsOverlayHeights(t *testing.T) {
+	m := NewModelWithCatalog(fixtureConfig(t), sampleGrouped(), 5, runtimeCatalogForTUI())
+	m.width = 80
+	m.height = 24
+
+	baseHeight := agentListViewportHeight(m)
+	require.Positive(t, baseHeight)
+
+	// Save success overlay
+	m.saveSuccess = true
+	saveHeight := agentListViewportHeight(m)
+	assert.Less(t, saveHeight, baseHeight, "save success overlay must reduce viewport height")
+
+	// Quit confirm overlay
+	m.quitConfirm = true
+	quitHeight := agentListViewportHeight(m)
+	assert.Less(t, quitHeight, saveHeight, "quit confirmation overlay must further reduce viewport height")
+
+	// Degraded catalog warning
+	m.agentCatalog.Degraded = true
+	m.agentCatalog.Diagnostics = []agentcatalog.Diagnostic{{Message: "warning"}}
+	degradedHeight := agentListViewportHeight(m)
+	assert.Less(t, degradedHeight, quitHeight, "catalog warning overlay must further reduce viewport height")
 }
