@@ -60,10 +60,10 @@ var version string
 // is safe to call as the very first action of run().
 func printVersion(w io.Writer) {
 	if version == "" {
-		fmt.Fprintln(w, "(dev)")
+		_, _ = fmt.Fprintln(w, "(dev)")
 		return
 	}
-	fmt.Fprintln(w, version)
+	_, _ = fmt.Fprintln(w, version)
 }
 
 // printUsage writes the program usage banner to w. The program name is the
@@ -72,8 +72,8 @@ func printVersion(w io.Writer) {
 // even though parseFlags suppresses the flag package's own output via
 // SetOutput(io.Discard).
 func printUsage(w io.Writer, fs *flag.FlagSet) {
-	fmt.Fprintf(w, "Usage: %s [flags]\n\n", appname.Name)
-	fmt.Fprintln(w, "Flags:")
+	_, _ = fmt.Fprintf(w, "Usage: %s [flags]\n\n", appname.Name)
+	_, _ = fmt.Fprintln(w, "Flags:")
 	fs.SetOutput(w)
 	fs.PrintDefaults()
 }
@@ -384,14 +384,6 @@ func runListModels(cfg *config.Config, models []opencode.Model) error {
 // runListAgents prints the authoritative unified catalog to stdout.
 func runListAgents(catalog agentcatalog.Catalog) error {
 	return formatAgents(os.Stdout, catalog)
-}
-
-// runTUI launches the interactive Bubbletea terminal UI with authoritative
-// runtime discovery and static degraded fallback.
-//
-// Spec: REQ-CMD-005, REQ-TUI-001
-func runTUI(cfg *config.Config, grouped map[string][]opencode.Model, backupCount int) error {
-	return runTUIWithDependencies(cfg, grouped, backupCount, productionAgentDiscovery, newTUIModel, runTUIProgram)
 }
 
 type tuiModelFactory func(*config.Config, map[string][]opencode.Model, int, agentcatalog.Catalog) tea.Model

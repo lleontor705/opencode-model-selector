@@ -366,12 +366,6 @@ func (c *Config) GetAgentMode(agentName string) string {
 	return normalizeAgentMode(val)
 }
 
-// getModeString extracts the "mode" string from an agent map, defaulting to
-// "all" when absent or non-string.
-func getModeString(agent map[string]interface{}) string {
-	return normalizeAgentMode(agent["mode"])
-}
-
 // normalizeAgentMode canonicalizes supported role values and safely falls
 // back to "all" for absent, empty, non-string, or unknown values.
 func normalizeAgentMode(value interface{}) string {
@@ -387,12 +381,6 @@ func normalizeAgentMode(value interface{}) string {
 	default:
 		return "all"
 	}
-}
-
-// getBoolField extracts a boolean field from an agent map, defaulting to false.
-func getBoolField(agent map[string]interface{}, fieldName string) bool {
-	b, ok := agent[fieldName].(bool)
-	return ok && b
 }
 
 // getBoolFieldOrNil routes through GetAgentField so the lookup handles missing

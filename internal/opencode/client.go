@@ -67,7 +67,7 @@ func (c *AgentClient) Agents(ctx context.Context, directory string) ([]RuntimeAg
 	if err != nil {
 		return nil, fmt.Errorf("request runtime agents: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
 		return nil, fmt.Errorf("request runtime agents: unexpected HTTP status %d", resp.StatusCode)

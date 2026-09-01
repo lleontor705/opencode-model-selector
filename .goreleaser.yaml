@@ -1,7 +1,14 @@
-version: 2
+﻿version: 2
+
+project_name: ocs
+
+before:
+  hooks:
+    - go mod tidy
 
 builds:
-  - main: ./cmd/ocs
+  - id: ocs
+    main: ./cmd/ocs
     binary: ocs
     env:
       - CGO_ENABLED=0
@@ -16,13 +23,13 @@ builds:
       - -s -w -X main.version={{.Version}}
 
 archives:
-  - formats:
-      - tar.gz
+  - id: default
+    builds:
+      - ocs
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
     format_overrides:
       - goos: windows
-        formats:
-          - zip
-    name_template: "ocs_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+        format: zip
 
 checksum:
   name_template: "checksums.txt"
@@ -30,13 +37,6 @@ checksum:
 changelog:
   sort: asc
   filters:
-    include:
-      - "^feat"
-      - "^fix"
-      - "^refactor"
-      - "^perf"
     exclude:
-      - "^docs"
-      - "^test"
-      - "^ci"
-      - "^chore\\(deps\\)"
+      - "^docs:"
+      - "^test:"

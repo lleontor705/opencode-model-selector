@@ -891,7 +891,7 @@ func TestIntegration_TUI_ModelOnlyWritePreservesMarkdownAndOtherJSONFields(t *te
 	m = pressKey(m, tea.KeyPressMsg{Code: tea.KeyEnter}) // select only model
 	m = pressKey(m, keyRune('s'))
 	require.True(t, onSaveConfirm(m))
-	m = pressKey(m, tea.KeyPressMsg{Code: tea.KeyEnter}) // persist
+	_ = pressKey(m, tea.KeyPressMsg{Code: tea.KeyEnter}) // persist
 
 	reloaded, err := config.LoadConfig(configPath)
 	require.NoError(t, err)
@@ -1141,18 +1141,6 @@ func buildFakeOpenCode(t *testing.T) string {
 	return path
 }
 
-// runBinary runs the binary with the given args and returns stdout. It fails
-// the test if the exit code is non-zero OR if stderr is non-empty (since
-// list-agents on a valid config should produce no stderr).
-func runBinary(t *testing.T, binary string, args ...string) string {
-	t.Helper()
-	stdout, stderr, exitCode := runBinaryFull(t, binary, args...)
-	require.Zero(t, exitCode,
-		"unexpected non-zero exit code %d; stderr: %q", exitCode, stderr)
-	require.Empty(t, stderr,
-		"unexpected stderr output: %q", stderr)
-	return stdout
-}
 
 // runBinaryFull runs the binary with the given args and returns stdout,
 // stderr, and the exit code. Does not fail the test on non-zero exit — the
